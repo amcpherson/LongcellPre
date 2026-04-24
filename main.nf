@@ -18,6 +18,46 @@ params.work_dir = 'test_data/nextflow_annotation_output'
 params.overwrite = true
 params.cores = 4
 params.to_isoform = true
+// Barcode extraction parameters
+params.adapter = null
+params.window = 10
+params.step = 2
+params.left_flank = 0
+params.right_flank = 0
+params.drop_adapter = false
+params.polyA_bin = 20
+params.polyA_base_count = 15
+params.polyA_len = 10
+params.barcode_len = 16
+params.mu = 20
+params.sigma = 10
+params.k = 6
+params.batch = 100
+params.top = 5
+params.cos_thresh = 0.25
+params.alpha = 0.05
+params.edit_thresh = 3
+params.UMI_len = 10
+params.UMI_flank = 1
+// UMI deduplication parameters
+params.splice_site_thresh = 3
+params.sim_thresh = null
+params.verbose = false
+params.bed_gene_col = "gene"
+params.bed_strand_col = "strand"
+// Isoform imputation parameters
+params.filter_only_intron = true
+params.mid_offset_thresh = 3
+params.overlap_thresh = 0
+params.gtf_gene_col = "gene"
+params.gtf_start_col = "start"
+params.gtf_end_col = "end"
+params.gtf_iso_col = "transname"
+params.split = "|"
+params.sep = ","
+// Tool paths
+params.minimap2 = "minimap2"
+params.samtools = "samtools"
 
 process RUN_ANNOTATION {
     publishDir "${params.work_dir}", mode: 'copy', overwrite: true
@@ -53,8 +93,35 @@ process EXTRACT_TAG_BC {
     path 'BarcodeMatch.txt'
 
     script:
+    def adapter_arg = params.adapter ? "--adapter ${params.adapter}" : ''
     """
-    extract_tag_bc.R --fastq_path ${fastq_file} --barcode_path ${barcode_file}
+    extract_tag_bc.R \
+      --fastq_path ${fastq_file} \
+      --barcode_path ${barcode_file} \
+      --toolkit ${params.toolkit} \
+      --protocol ${params.protocol} \
+      ${adapter_arg} \
+      --window ${params.window} \
+      --step ${params.step} \
+      --left_flank ${params.left_flank} \
+      --right_flank ${params.right_flank} \
+      --drop_adapter ${params.drop_adapter} \
+      --polyA_bin ${params.polyA_bin} \
+      --polyA_base_count ${params.polyA_base_count} \
+      --polyA_len ${params.polyA_len} \
+      --barcode_len ${params.barcode_len} \
+      --mu ${params.mu} \
+      --sigma ${params.sigma} \
+      --k ${params.k} \
+      --batch ${params.batch} \
+      --top ${params.top} \
+      --cos_thresh ${params.cos_thresh} \
+      --alpha ${params.alpha} \
+      --edit_thresh ${params.edit_thresh} \
+      --mean_edit_thresh ${params.mean_edit_thresh} \
+      --UMI_len ${params.UMI_len} \
+      --UMI_flank ${params.UMI_flank} \
+      --cores ${params.cores}
     """
 }
 
@@ -97,6 +164,8 @@ process EXTRACT_AND_INTEGRATE_READS {
     path 'BarcodeMatch/adapterNeedle.txt'
 
     script:
+    def adapter_arg = params.adapter ? "--adapter ${params.adapter}" : ''
+    def bed_arg = params.minimap_bed_path ? "--minimap_bed_path ${params.minimap_bed_path}" : ''
     """
     mkdir -p BarcodeMatch
     cp ${barcode_file} BarcodeMatch/BarcodeMatch.txt
@@ -112,6 +181,10 @@ process EXTRACT_AND_INTEGRATE_READS {
       --genome_name ${params.genome_name} \
       --toolkit ${params.toolkit} \
       --protocol ${params.protocol} \
+      ${adapter_arg} \
+      ${bed_arg} \
+      --minimap2 ${params.minimap2} \
+      --samtools ${params.samtools} \
       --bedtools ${params.bedtools} \
       --map_qual ${params.map_qual} \
       --end_flank ${params.end_flank} \
@@ -134,6 +207,8 @@ process UMI_COUNT_PARALLEL {
     path 'iso_count.txt'
 
     script:
+    def sim_thresh_arg = params.sim_thresh ? "--sim_thresh ${params.sim_thresh}" : ''
+    def verbose_arg = params.verbose ? "--verbose TRUE" : "--verbose FALSE"
     """
     mkdir -p out
     umi_count_parallel.R \
@@ -141,6 +216,11 @@ process UMI_COUNT_PARALLEL {
       --qual_path ${adapter_needle_file} \
       --gene_bed_path ${gene_bed_file} \
       --out_dir . \
+      --splice_site_thresh ${params.splice_site_thresh} \
+      ${sim_thresh_arg} \
+      ${verbose_arg} \
+      --bed_gene_col ${params.bed_gene_col} \
+      --bed_strand_col ${params.bed_strand_col} \
       --cores ${params.cores}
     """
 }
@@ -159,6 +239,7 @@ process UMI_COUNT_TO_ISOFORM {
 
     script:
     def gtf_arg = gtf_file.name != 'NO_FILE' ? "--gtf_path ${gtf_file}" : "--gtf_path NO_FILE"
+    def filter_arg = params.filter_only_intron ? "--filter_only_intron TRUE" : "--filter_only_intron FALSE"
     """
     mkdir -p out
     umi_count_to_isoform.R \
@@ -166,6 +247,17 @@ process UMI_COUNT_TO_ISOFORM {
       --gene_bed_path ${gene_bed_file} \
       ${gtf_arg} \
       --out_dir . \
+      ${filter_arg} \
+      --mid_offset_thresh ${params.mid_offset_thresh} \
+      --overlap_thresh ${params.overlap_thresh} \
+      --gtf_gene_col ${params.gtf_gene_col} \
+      --gtf_start_col ${params.gtf_start_col} \
+      --gtf_end_col ${params.gtf_end_col} \
+      --gtf_iso_col ${params.gtf_iso_col} \
+      --split ${params.split} \
+      --sep ${params.sep} \
+      --bed_gene_col ${params.bed_gene_col} \
+      --bed_strand_col ${params.bed_strand_col} \
       --cores ${params.cores}
     """
 }
@@ -195,6 +287,8 @@ process UMI_CONSENSUS_OUT {
       --genome_path ${genome_file} \
       --genome_name ${params.genome_name} \
       ${bed_arg} \
+      --minimap2 ${params.minimap2} \
+      --samtools ${params.samtools} \
       --out_dir . \
       --cores ${params.cores}
     """
