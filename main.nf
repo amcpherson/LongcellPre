@@ -1,5 +1,23 @@
 nextflow.enable.dsl=2
 
+// ============================================================================
+// LongcellPre Nextflow Pipeline
+// ============================================================================
+// This pipeline processes long-read single-cell RNA-seq data with barcode
+// and UMI tagging. It includes optional FASTQ chunking to reduce memory usage
+// for large datasets.
+//
+// FASTQ Chunking:
+// By default (params.chunk_fastq=true), the input FASTQ is split into chunks
+// of ~1M reads each (configurable via params.fastq_chunk_size). Each chunk is
+// processed independently for barcode/UMI extraction, then results are merged.
+// This significantly reduces peak memory usage without affecting accuracy.
+//
+// To disable chunking and process the entire FASTQ at once (original behavior):
+//   nextflow run main.nf --chunk_fastq false ...
+//
+// ============================================================================
+
 params.gtf_path = null
 params.gene_bed_path = null
 params.fastq_path = null
@@ -55,6 +73,9 @@ params.gtf_end_col = "end"
 params.gtf_iso_col = "transname"
 params.split = "|"
 params.sep = ","
+// FASTQ chunking parameters
+params.fastq_chunk_size = 1000000  // Number of reads per chunk (1M default)
+params.chunk_fastq = true  // Enable FASTQ chunking to reduce memory
 // Tool paths
 params.minimap2 = "minimap2"
 params.samtools = "samtools"
@@ -77,6 +98,102 @@ process RUN_ANNOTATION {
     """
     mkdir -p annotation
     annotation.R ${gtf_arg} ${gene_bed_arg} --work_dir . --overwrite ${overwrite_arg}
+    """
+}
+
+process SPLIT_FASTQ {
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path fastq_file
+
+    output:
+    path 'chunk_*.fastq.gz'
+
+    script:
+    """
+    zcat ${fastq_file} | paste - - - - | split -l \$(( ${params.fastq_chunk_size} * 4 )) --numeric-suffixes=1 --suffix-length=4 - chunk_ && \
+    for f in chunk_*; do
+        awk '{print \$0}' "\$f" | tr ' ' '\\n' | gzip > "\${f}.fastq.gz"
+        rm "\$f"
+    done
+    """
+}
+
+process EXTRACT_TAG_BC_CHUNK {
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path fastq_chunk
+    path barcode_file
+
+    output:
+    path 'polish.fq.gz'
+    path 'BarcodeMatch.txt'
+
+    script:
+    def adapter_arg = params.adapter ? "--adapter ${params.adapter}" : ''
+    """
+    extract_tag_bc.R \
+      --fastq_path ${fastq_chunk} \
+      --barcode_path ${barcode_file} \
+      --toolkit ${params.toolkit} \
+      --protocol ${params.protocol} \
+      ${adapter_arg} \
+      --window ${params.window} \
+      --step ${params.step} \
+      --left_flank ${params.left_flank} \
+      --right_flank ${params.right_flank} \
+      --drop_adapter ${params.drop_adapter} \
+      --polyA_bin ${params.polyA_bin} \
+      --polyA_base_count ${params.polyA_base_count} \
+      --polyA_len ${params.polyA_len} \
+      --barcode_len ${params.barcode_len} \
+      --mu ${params.mu} \
+      --sigma ${params.sigma} \
+      --k ${params.k} \
+      --batch ${params.batch} \
+      --top ${params.top} \
+      --cos_thresh ${params.cos_thresh} \
+      --alpha ${params.alpha} \
+      --edit_thresh ${params.edit_thresh} \
+      --mean_edit_thresh ${params.mean_edit_thresh} \
+      --UMI_len ${params.UMI_len} \
+      --UMI_flank ${params.UMI_flank} \
+      --cores ${params.cores}
+    """
+}
+
+process MERGE_POLISH_FASTQ {
+    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path 'polish_*.fq.gz'
+
+    output:
+    path 'polish.fq.gz'
+
+    script:
+    """
+    cat polish_*.fq.gz > polish.fq.gz
+    """
+}
+
+process MERGE_BARCODE_MATCH {
+    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path 'barcode_*.txt'
+
+    output:
+    path 'BarcodeMatch.txt'
+
+    script:
+    """
+    # Merge all barcode match files, keeping header from first file
+    awk 'FNR==1 && NR>1 { next; } { print }' barcode_*.txt > BarcodeMatch.txt
     """
 }
 
@@ -312,10 +429,32 @@ workflow {
         fastq = file(params.fastq_path)
         barcode = file(params.barcode_path)
         
-        extract_result = EXTRACT_TAG_BC(
-            fastq,
-            barcode
-        )
+        if(params.chunk_fastq){
+            // Process with chunking to reduce memory usage
+            fastq_chunks = SPLIT_FASTQ(fastq).flatten()
+            
+            chunk_results = EXTRACT_TAG_BC_CHUNK(
+                fastq_chunks,
+                barcode
+            )
+            
+            // Merge results from all chunks
+            polish_merged = MERGE_POLISH_FASTQ(
+                chunk_results[0].collect()
+            )
+            
+            barcode_merged = MERGE_BARCODE_MATCH(
+                chunk_results[1].collect()
+            )
+            
+            extract_result = polish_merged.combine(barcode_merged)
+        } else {
+            // Process full FASTQ in a single run (original behavior)
+            extract_result = EXTRACT_TAG_BC(
+                fastq,
+                barcode
+            )
+        }
         
         // Stage 3: Map polished FASTQ to genome
         if(params.genome_path){
