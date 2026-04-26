@@ -55,6 +55,9 @@ RUN R -e "remotes::install_github('yuntianf/LongcellPre', dependencies=TRUE)"
 # Clone the LongcellPre repository to access exec/ scripts
 RUN git clone https://github.com/yuntianf/LongcellPre.git /opt/LongcellPre
 
+# Install grch38
+RUN R -e "library(BiocManager); install('BSgenome.Hsapiens.UCSC.hg38')"
+
 # Add exec scripts to PATH
 ENV PATH="/opt/LongcellPre/exec:${PATH}"
 
