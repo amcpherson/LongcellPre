@@ -4,17 +4,18 @@ nextflow.enable.dsl=2
 // LongcellPre Nextflow Pipeline
 // ============================================================================
 // This pipeline processes long-read single-cell RNA-seq data with barcode
-// and UMI tagging. It includes optional FASTQ chunking to reduce memory usage
-// for large datasets.
+// and UMI tagging.
 //
 // FASTQ Chunking:
-// By default (params.chunk_fastq=true), the input FASTQ is split into chunks
-// of ~1M reads each (configurable via params.fastq_chunk_size). Each chunk is
-// processed independently for barcode/UMI extraction, then results are merged.
-// This significantly reduces peak memory usage without affecting accuracy.
+// The input FASTQ is split into chunks of ~1M reads each (configurable via
+// params.fastq_chunk_size). Each chunk is processed independently for
+// barcode/UMI extraction, then results are merged. This reduces peak memory
+// usage without affecting accuracy.
 //
-// To disable chunking and process the entire FASTQ at once (original behavior):
-//   nextflow run main.nf --chunk_fastq false ...
+// UMI Counting Chunking:
+// The barcode/isoform data is split into chunks based on genes (~50 genes per
+// chunk, configurable via params.genes_per_chunk). Each gene chunk is processed
+// independently for UMI deduplication, then results are merged.
 //
 // ============================================================================
 
@@ -75,7 +76,8 @@ params.split = "|"
 params.sep = ","
 // FASTQ chunking parameters
 params.fastq_chunk_size = 1000000  // Number of reads per chunk (1M default)
-params.chunk_fastq = true  // Enable FASTQ chunking to reduce memory
+// UMI counting chunking parameters
+params.genes_per_chunk = 50  // Approximate number of genes per chunk
 // Tool paths
 params.minimap2 = "minimap2"
 params.samtools = "samtools"
@@ -90,6 +92,8 @@ process RUN_ANNOTATION {
 
     output:
     path 'annotation'
+    path 'annotation/gene_bed.rds'
+    path 'annotation/exon_gtf.rds', optional: true
 
     script:
     def gtf_arg = gtf_file.name != 'gene_bed_file' ? "--gtf_path ${gtf_file}" : ''
@@ -112,11 +116,22 @@ process SPLIT_FASTQ {
 
     script:
     """
-    zcat ${fastq_file} | paste - - - - | split -l \$(( ${params.fastq_chunk_size} * 4 )) --numeric-suffixes=1 --suffix-length=4 - chunk_ && \
-    for f in chunk_*; do
-        awk '{print \$0}' "\$f" | tr ' ' '\\n' | gzip > "\${f}.fastq.gz"
-        rm "\$f"
+    # Split FASTQ into chunks (4 lines per FASTQ record)
+    gunzip -c '${fastq_file}' | split -l \$((${params.fastq_chunk_size} * 4)) --numeric-suffixes=1 -d - chunk_raw_
+    
+    # Compress each chunk
+    for f in chunk_raw_*; do
+        if [ -f "\$f" ]; then
+            cat "\$f" | gzip > chunk_\${f##chunk_raw_}.fastq.gz
+            rm "\$f"
+        fi
     done
+    
+    # Verify chunks were created
+    if ! ls chunk_*.fastq.gz 1> /dev/null 2>&1; then
+        echo "Error: No chunks created. Check input FASTQ file."
+        exit 1
+    fi
     """
 }
 
@@ -165,80 +180,25 @@ process EXTRACT_TAG_BC_CHUNK {
 }
 
 process MERGE_POLISH_FASTQ {
-    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
     path 'polish_*.fq.gz'
-
-    output:
-    path 'polish.fq.gz'
-
-    script:
-    """
-    cat polish_*.fq.gz > polish.fq.gz
-    """
-}
-
-process MERGE_BARCODE_MATCH {
-    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
-    container 'quay.io/andrew_mcpherson/longcellpre:latest'
-
-    input:
     path 'barcode_*.txt'
 
     output:
-    path 'BarcodeMatch.txt'
-
-    script:
-    """
-    # Merge all barcode match files, keeping header from first file
-    awk 'FNR==1 && NR>1 { next; } { print }' barcode_*.txt > BarcodeMatch.txt
-    """
-}
-
-process EXTRACT_TAG_BC {
-    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
-    container 'quay.io/andrew_mcpherson/longcellpre:latest'
-
-    input:
-    path fastq_file
-    path barcode_file
-
-    output:
     path 'polish.fq.gz'
     path 'BarcodeMatch.txt'
 
+    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
+
     script:
-    def adapter_arg = params.adapter ? "--adapter ${params.adapter}" : ''
     """
-    extract_tag_bc.R \
-      --fastq_path ${fastq_file} \
-      --barcode_path ${barcode_file} \
-      --toolkit ${params.toolkit} \
-      --protocol ${params.protocol} \
-      ${adapter_arg} \
-      --window ${params.window} \
-      --step ${params.step} \
-      --left_flank ${params.left_flank} \
-      --right_flank ${params.right_flank} \
-      --drop_adapter ${params.drop_adapter} \
-      --polyA_bin ${params.polyA_bin} \
-      --polyA_base_count ${params.polyA_base_count} \
-      --polyA_len ${params.polyA_len} \
-      --barcode_len ${params.barcode_len} \
-      --mu ${params.mu} \
-      --sigma ${params.sigma} \
-      --k ${params.k} \
-      --batch ${params.batch} \
-      --top ${params.top} \
-      --cos_thresh ${params.cos_thresh} \
-      --alpha ${params.alpha} \
-      --edit_thresh ${params.edit_thresh} \
-      --mean_edit_thresh ${params.mean_edit_thresh} \
-      --UMI_len ${params.UMI_len} \
-      --UMI_flank ${params.UMI_flank} \
-      --cores ${params.cores}
+    # Merge polish FASTQ files
+    cat polish_*.fq.gz > polish.fq.gz
+    
+    # Merge barcode match files, keeping header from first file
+    awk 'FNR==1 && NR>1 { next; } { print }' barcode_*.txt > BarcodeMatch.txt
     """
 }
 
@@ -311,34 +271,113 @@ process EXTRACT_AND_INTEGRATE_READS {
     """
 }
 
-process UMI_COUNT_PARALLEL {
-    publishDir "${params.work_dir}/out", mode: 'copy', overwrite: true
+process SPLIT_UMI_DATA {
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
     path barcode_iso_file
     path adapter_needle_file
+
+    output:
+    path 'data_chunk_*.txt'
+    path 'qual_chunk_*.txt'
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    
+    # Load data files
+    data <- read.table('${barcode_iso_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+    qual <- read.table('${adapter_needle_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+    
+    # Get unique genes and split into chunks
+    genes <- unique(data\$gene)
+    n_genes <- length(genes)
+    n_chunks <- max(1, ceiling(n_genes / ${params.genes_per_chunk}))
+    
+    cat("Splitting", n_genes, "genes into", n_chunks, "chunks\\n")
+    
+    # Create gene chunks - roughly balanced
+    gene_chunks <- split(genes, ceiling(seq_along(genes) / (n_genes / n_chunks)))
+    
+    # Write each chunk
+    for (i in seq_along(gene_chunks)) {
+        chunk_genes <- gene_chunks[[i]]
+        chunk_data <- data[data\$gene %in% chunk_genes, ]
+        
+        chunk_file <- paste0('data_chunk_', sprintf('%03d', i), '.txt')
+        write.table(chunk_data, file = chunk_file, sep = "\t", quote = FALSE, 
+                    row.names = FALSE, col.names = TRUE)
+        cat("Wrote", nrow(chunk_data), "rows to", chunk_file, "\\n")
+    }
+    
+    # Qual file is the same for all chunks (no need to split), but copy for each chunk
+    for (i in seq_along(gene_chunks)) {
+        qual_file <- paste0('qual_chunk_', sprintf('%03d', i), '.txt')
+        write.table(qual, file = qual_file, sep = "\t", quote = FALSE,
+                    row.names = FALSE, col.names = TRUE)
+    }
+    
+    cat("Done splitting UMI data into", n_chunks, "chunks\\n")
+    """
+}
+
+process UMI_COUNT_PARALLEL_CHUNK {
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path barcode_iso_chunk
+    path adapter_needle_chunk
     path gene_bed_file
 
     output:
-    path 'iso_count.txt'
+    path 'iso_count_*.txt'
 
     script:
     def sim_thresh_arg = params.sim_thresh ? "--sim_thresh ${params.sim_thresh}" : ''
     def verbose_arg = params.verbose ? "--verbose TRUE" : "--verbose FALSE"
     """
-    mkdir -p out
-    umi_count_parallel.R \
-      --data_path ${barcode_iso_file} \
-      --qual_path ${adapter_needle_file} \
+    # Extract chunk number from filename
+    chunk_num=\$(basename '${barcode_iso_chunk}' | sed 's/data_chunk_\\([0-9]*\\).txt/\\1/')
+    
+    # Process this gene chunk with simplified umi_count.R (no internal parallelism)
+    # Nextflow handles parallelism at chunk level
+    umi_count.R \
+      --data_path ${barcode_iso_chunk} \
+      --qual_path ${adapter_needle_chunk} \
       --gene_bed_path ${gene_bed_file} \
       --out_dir . \
       --splice_site_thresh ${params.splice_site_thresh} \
       ${sim_thresh_arg} \
       ${verbose_arg} \
       --bed_gene_col ${params.bed_gene_col} \
-      --bed_strand_col ${params.bed_strand_col} \
-      --cores ${params.cores}
+      --bed_strand_col ${params.bed_strand_col}
+    
+    # Rename output to include chunk number
+    if [ -f iso_count.txt ]; then
+        mv iso_count.txt iso_count_\${chunk_num}.txt
+    fi
+    """
+}
+
+process MERGE_UMI_COUNT {
+    publishDir "${params.work_dir}/out", mode: 'copy', overwrite: true
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path 'iso_count_*.txt'
+
+    output:
+    path 'iso_count.txt'
+
+    script:
+    """
+    # Merge all iso_count chunks, keeping header from first file
+    awk 'FNR==1 && NR>1 { next; } { print }' iso_count_*.txt > iso_count.txt
+    
+    # Verify output
+    lines=\$(wc -l < iso_count.txt)
+    echo "Merged UMI count file with \$lines lines"
     """
 }
 
@@ -371,8 +410,8 @@ process UMI_COUNT_TO_ISOFORM {
       --gtf_start_col ${params.gtf_start_col} \
       --gtf_end_col ${params.gtf_end_col} \
       --gtf_iso_col ${params.gtf_iso_col} \
-      --split ${params.split} \
-      --sep ${params.sep} \
+      --split '${params.split}' \
+      --sep '${params.sep}' \
       --bed_gene_col ${params.bed_gene_col} \
       --bed_strand_col ${params.bed_strand_col} \
       --cores ${params.cores}
@@ -429,32 +468,17 @@ workflow {
         fastq = file(params.fastq_path)
         barcode = file(params.barcode_path)
         
-        if(params.chunk_fastq){
-            // Process with chunking to reduce memory usage
-            fastq_chunks = SPLIT_FASTQ(fastq).flatten()
-            
-            chunk_results = EXTRACT_TAG_BC_CHUNK(
-                fastq_chunks,
-                barcode
-            )
-            
-            // Merge results from all chunks
-            polish_merged = MERGE_POLISH_FASTQ(
-                chunk_results[0].collect()
-            )
-            
-            barcode_merged = MERGE_BARCODE_MATCH(
-                chunk_results[1].collect()
-            )
-            
-            extract_result = polish_merged.combine(barcode_merged)
-        } else {
-            // Process full FASTQ in a single run (original behavior)
-            extract_result = EXTRACT_TAG_BC(
-                fastq,
-                barcode
-            )
-        }
+        fastq_chunks = SPLIT_FASTQ(fastq).flatten()
+        
+        chunk_results = EXTRACT_TAG_BC_CHUNK(
+            fastq_chunks,
+            barcode
+        )
+        
+        extract_result = MERGE_POLISH_FASTQ(
+            chunk_results[0].collect(),
+            chunk_results[1].collect()
+        )
         
         // Stage 3: Map polished FASTQ to genome
         if(params.genome_path){
@@ -474,20 +498,33 @@ workflow {
                     extract_result[1],
                     mapping_result[0],
                     mapping_result[1],
-                    annotation_result
+                    annotation_result[0]
                 )
 
                 // Stage 5: UMI deduplication
-                gene_bed_rds = file("${params.work_dir}/annotation/gene_bed.rds")
-                umi_count_result = UMI_COUNT_PARALLEL(
+                gene_bed_rds = annotation_result[1]
+                
+                split_results = SPLIT_UMI_DATA(
                     extract_and_integrate_result[0],  // BarcodeMatchIso.txt
-                    extract_and_integrate_result[1],  // adapterNeedle.txt
+                    extract_and_integrate_result[1]   // adapterNeedle.txt
+                )
+                
+                chunk_data = split_results[0].flatten()
+                chunk_qual = split_results[1].flatten()
+                
+                chunk_umi_results = UMI_COUNT_PARALLEL_CHUNK(
+                    chunk_data,
+                    chunk_qual,
                     gene_bed_rds
+                )
+                
+                umi_count_result = MERGE_UMI_COUNT(
+                    chunk_umi_results.flatten().collect()
                 )
 
                 // Stage 6: Isoform imputation (conditional on to_isoform flag)
                 if(params.to_isoform && params.gtf_path){
-                    gtf_rds = file("${params.work_dir}/annotation/exon_gtf.rds")
+                    gtf_rds = annotation_result[2]
                     iso_impute_result = UMI_COUNT_TO_ISOFORM(
                         umi_count_result,
                         gene_bed_rds,
