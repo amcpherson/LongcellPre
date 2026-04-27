@@ -32,9 +32,6 @@ verbose <- parser_args[["verbose"]] %||% "FALSE"
 verbose <- as.logical(verbose)
 bed_gene_col <- parser_args[["bed_gene_col"]] %||% "gene"
 bed_strand_col <- parser_args[["bed_strand_col"]] %||% "strand"
-cores <- as.numeric(parser_args[["cores"]] %||% "1")
-force_UMI_dedup <- parser_args[["force_UMI_dedup"]] %||% "FALSE"
-force_UMI_dedup <- as.logical(force_UMI_dedup)
 
 # Load libraries
 library(LongcellPre)
@@ -48,13 +45,16 @@ data <- read.table(data_path, header = TRUE, sep = "\t", stringsAsFactors = FALS
 qual <- read.table(qual_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
 gene_bed <- readRDS(gene_bed_path)
 
-# Run UMI count
-cat("Running UMI deduplication with", cores, "cores...\n")
-count <- umi_count_parallel(
-  data = data,
+# Get gene strand info
+gene_strand <- unique(gene_bed[,c(bed_gene_col,bed_strand_col)])
+colnames(gene_strand) <- c("gene", "strand")
+
+# Run UMI count (no internal parallelism - Nextflow handles that)
+cat("Running UMI deduplication on chunk...\n")
+count <- umi_count(
+  cell_exon = data,
   qual = qual,
-  dir = out_dir,
-  gene_bed = gene_bed,
+  gene_strand = gene_strand,
   bar = bar,
   gene = gene,
   isoform = isoform,
@@ -63,11 +63,31 @@ count <- umi_count_parallel(
   split = split,
   sep = sep,
   splice_site_thresh = splice_site_thresh,
-  verbose = verbose,
-  bed_gene_col = bed_gene_col,
-  bed_strand_col = bed_strand_col,
-  cores = cores,
-  force_UMI_dedup = force_UMI_dedup
+  verbose = verbose
 )
 
-cat("UMI deduplication completed successfully.\n")
+# Filter and format output
+if(!is.null(count) && nrow(count) > 0) {
+  count <- as.data.frame(count)
+  count <- count[,c("cell","gene","isoform","count","polyA")]
+  cat("UMI deduplication completed successfully.\n")
+} else {
+  # Create empty dataframe with correct column structure
+  count <- data.frame(cell = character(),
+                      gene = character(),
+                      isoform = character(),
+                      count = numeric(),
+                      polyA = logical(),
+                      stringsAsFactors = FALSE)
+  cat("Warning: No output generated from UMI count, creating empty table.\n")
+}
+
+# Always save output (with headers even if empty)
+write.table(count, 
+            file = file.path(out_dir, "iso_count.txt"),
+            sep = "\t", 
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = TRUE)
+
+cat("Output saved to", file.path(out_dir, "iso_count.txt"), "\n")

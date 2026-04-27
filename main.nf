@@ -381,28 +381,56 @@ process MERGE_UMI_COUNT {
     """
 }
 
-process UMI_COUNT_TO_ISOFORM {
-    publishDir "${params.work_dir}/out", mode: 'copy', overwrite: true
+process SPLIT_ISO_INPUT {
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
     path umi_count_file
-    path gene_bed_file
+
+    output:
+    path 'iso_chunk_*.txt'
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+
+    data <- read.table('${umi_count_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+    genes <- unique(data\$gene)
+    n_genes <- length(genes)
+    n_chunks <- max(1, ceiling(n_genes / ${params.genes_per_chunk}))
+
+    cat("Splitting", n_genes, "genes into", n_chunks, "chunks\\n")
+
+    gene_chunks <- split(genes, ceiling(seq_along(genes) / (n_genes / n_chunks)))
+
+    for (i in seq_along(gene_chunks)) {
+        chunk_data <- data[data\$gene %in% gene_chunks[[i]], ]
+        chunk_file <- paste0('iso_chunk_', sprintf('%03d', i), '.txt')
+        write.table(chunk_data, file = chunk_file, sep = "\t", quote = FALSE,
+                    row.names = FALSE, col.names = TRUE)
+        cat("Wrote", nrow(chunk_data), "rows to", chunk_file, "\\n")
+    }
+    """
+}
+
+process UMI_COUNT_TO_ISOFORM_CHUNK {
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path umi_count_chunk
     path gtf_file
 
     output:
-    path 'iso_count_mat.txt', optional: true
+    path 'iso_count_mat_chunk.txt'
 
     script:
-    def gtf_arg = gtf_file.name != 'NO_FILE' ? "--gtf_path ${gtf_file}" : "--gtf_path NO_FILE"
     def filter_arg = params.filter_only_intron ? "--filter_only_intron TRUE" : "--filter_only_intron FALSE"
     """
-    mkdir -p out
-    umi_count_to_isoform.R \
-      --umi_count_path ${umi_count_file} \
-      --gene_bed_path ${gene_bed_file} \
-      ${gtf_arg} \
-      --out_dir . \
+    umi_count_to_isoform_chunk.R \
+      --umi_count_path ${umi_count_chunk} \
+      --gtf_path ${gtf_file} \
+      --out_path iso_count_mat_chunk.txt \
       ${filter_arg} \
       --mid_offset_thresh ${params.mid_offset_thresh} \
       --overlap_thresh ${params.overlap_thresh} \
@@ -411,10 +439,40 @@ process UMI_COUNT_TO_ISOFORM {
       --gtf_end_col ${params.gtf_end_col} \
       --gtf_iso_col ${params.gtf_iso_col} \
       --split '${params.split}' \
-      --sep '${params.sep}' \
-      --bed_gene_col ${params.bed_gene_col} \
-      --bed_strand_col ${params.bed_strand_col} \
-      --cores ${params.cores}
+      --sep '${params.sep}'
+    """
+}
+
+process MERGE_ISO_MAT {
+    publishDir "${params.work_dir}/out", mode: 'copy', overwrite: true
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path 'iso_count_mat_*.txt'
+
+    output:
+    path 'gene'
+    path 'isoform'
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+
+    library(LongcellPre)
+
+    files <- list.files(pattern = "^iso_count_mat_.*\\\\.txt\$")
+    cat("Merging", length(files), "isoform count chunks\\n")
+
+    chunks <- lapply(files, function(f) {
+        read.table(f, header = TRUE, sep = "\\t", stringsAsFactors = FALSE)
+    })
+    combined <- as.data.frame(do.call(rbind, chunks))
+    # Drop empty-header rows from chunks with no results
+    combined <- combined[nchar(combined\$cell) > 0, ]
+    cat("Combined", nrow(combined), "rows\\n")
+
+    saveIsoMat(combined, ".")
+    cat("Isoform matrix saved\\n")
     """
 }
 
@@ -502,7 +560,8 @@ workflow {
                 )
 
                 // Stage 5: UMI deduplication
-                gene_bed_rds = annotation_result[1]
+                // Use .first() so the single file is broadcast to all parallel chunks
+                gene_bed_rds = annotation_result[1].first()
                 
                 split_results = SPLIT_UMI_DATA(
                     extract_and_integrate_result[0],  // BarcodeMatchIso.txt
@@ -524,11 +583,18 @@ workflow {
 
                 // Stage 6: Isoform imputation (conditional on to_isoform flag)
                 if(params.to_isoform && params.gtf_path){
-                    gtf_rds = annotation_result[2]
-                    iso_impute_result = UMI_COUNT_TO_ISOFORM(
-                        umi_count_result,
-                        gene_bed_rds,
+                    // Use .first() so the single GTF file is broadcast to all parallel chunks
+                    gtf_rds = annotation_result[2].first()
+
+                    iso_chunks = SPLIT_ISO_INPUT(umi_count_result).flatten()
+
+                    iso_chunk_results = UMI_COUNT_TO_ISOFORM_CHUNK(
+                        iso_chunks,
                         gtf_rds
+                    )
+
+                    iso_mat_result = MERGE_ISO_MAT(
+                        iso_chunk_results.collect()
                     )
                 }
 

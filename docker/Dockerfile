@@ -50,13 +50,13 @@ RUN R -e "BiocManager::install(c('rtracklayer', 'ShortRead', 'BSgenome'), ask=FA
 
 # Install LongcellPre dependencies
 RUN R -e "remotes::install_github('yuntianf/Longcellsrc')"
-RUN R -e "remotes::install_github('yuntianf/LongcellPre', dependencies=TRUE)"
+RUN R -e "remotes::install_github('amcpherson/LongcellPre', dependencies=TRUE)"
 
 # Clone the LongcellPre repository to access exec/ scripts
 RUN git clone https://github.com/yuntianf/LongcellPre.git /opt/LongcellPre
 
 # Install grch38
-RUN R -e "library(BiocManager); install('BSgenome.Hsapiens.UCSC.hg38')"
+RUN R -e "library(BiocManager);install('BSgenome.Hsapiens.UCSC.hg38')"
 
 # Add exec scripts to PATH
 ENV PATH="/opt/LongcellPre/exec:${PATH}"
