@@ -95,8 +95,8 @@ process RUN_ANNOTATION {
     path 'annotation/exon_gtf.rds', optional: true
 
     script:
-    def gtf_arg = gtf_file.name != 'gene_bed_file' ? "--gtf_path ${gtf_file}" : ''
-    def gene_bed_arg = gene_bed_file.name != 'gene_bed_file' ? "--gene_bed_path ${gene_bed_file}" : ''
+    def gtf_arg = gtf_file.name != 'NO_FILE' ? "--gtf_path ${gtf_file}" : ''
+    def gene_bed_arg = gene_bed_file.name != 'NO_FILE' ? "--gene_bed_path ${gene_bed_file}" : ''
     def overwrite_arg = params.overwrite ? 'TRUE' : 'FALSE'
     """
     mkdir -p annotation
@@ -208,7 +208,7 @@ process MAP_POLISHED_FASTQ {
     input:
     path fastq_file
     path genome_file
-    path bed_file
+    path bed_file, optional: true
 
     output:
     path 'polish.bam'
@@ -483,7 +483,7 @@ process UMI_CONSENSUS_OUT {
     path umi_count_file
     path gene_bed_file
     path genome_file
-    path bed_file
+    path bed_file, optional: true
 
     output:
     path 'UMI_collapsed.fq.gz'
@@ -511,7 +511,7 @@ process UMI_CONSENSUS_OUT {
 workflow {
     // Stage 1: Annotation
     if(params.gtf_path || params.gene_bed_path){
-        gtf = file(params.gtf_path)
+        gtf = params.gtf_path ? file(params.gtf_path) : file('NO_FILE')
         gene_bed = params.gene_bed_path ? file(params.gene_bed_path) : file('NO_FILE')
         
         annotation_result = RUN_ANNOTATION(
