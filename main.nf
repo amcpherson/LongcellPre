@@ -92,7 +92,7 @@ process RUN_ANNOTATION {
 
     output:
     path 'annotation/gene_bed.rds'
-    path 'annotation/exon_gtf.rds', optional: true
+    path 'annotation/exon_gtf.rds'
 
     script:
     def gtf_arg = gtf_file.name != 'NO_FILE' ? "--gtf_path ${gtf_file}" : ''
@@ -208,7 +208,7 @@ process MAP_POLISHED_FASTQ {
     input:
     path fastq_file
     path genome_file
-    path bed_file, optional: true
+    path bed_file
 
     output:
     path 'polish.bam'
@@ -483,7 +483,7 @@ process UMI_CONSENSUS_OUT {
     path umi_count_file
     path gene_bed_file
     path genome_file
-    path bed_file, optional: true
+    path bed_file
 
     output:
     path 'UMI_collapsed.fq.gz'
