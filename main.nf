@@ -230,9 +230,9 @@ process EXTRACT_AND_INTEGRATE_READS {
 
     input:
     path fastq_file
-    path barcode_file
-    path bam_file
-    path bai_file
+    path barcode_file, stageAs: 'BarcodeMatch/BarcodeMatch.txt'
+    path bam_file, stageAs: 'bam/polish.bam'
+    path bai_file, stageAs: 'bam/polish.bam.bai'
     path gene_bed_rds
 
     output:
@@ -243,14 +243,10 @@ process EXTRACT_AND_INTEGRATE_READS {
     def adapter_arg = params.adapter ? "--adapter ${params.adapter}" : ''
     def bed_arg = params.minimap_bed_path ? "--minimap_bed_path ${params.minimap_bed_path}" : ''
     """
-    mkdir -p BarcodeMatch
-    cp ${barcode_file} BarcodeMatch/BarcodeMatch.txt
-    mkdir -p bam
-    cp ${bam_file} bam/polish.bam
-    cp ${bai_file} bam/polish.bam.bai
+    mkdir -p annotation
     extract_and_integrate_reads.R \
       --fastq_path ${fastq_file} \
-      --barcode_path BarcodeMatch/BarcodeMatch.txt \
+      --barcode_path ${barcode_file} \
       --gene_bed_path ${gene_bed_rds} \
       --work_dir . \
       --genome_path ${params.genome_path} \
