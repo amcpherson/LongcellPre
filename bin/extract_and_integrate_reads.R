@@ -7,7 +7,6 @@ parse_args <- function(){
   opts <- list(
     fastq_path = NULL,
     barcode_path = NULL,
-    annotation_dir = NULL,
     gene_bed_path = NULL,
     work_dir = './',
     genome_path = NULL,
@@ -57,9 +56,6 @@ parse_args <- function(){
       i <- i + 2
     } else if(arg == '--barcode_path'){
       opts$barcode_path <- args[i+1]
-      i <- i + 2
-    } else if(arg == '--annotation_dir'){
-      opts$annotation_dir <- args[i+1]
       i <- i + 2
     } else if(arg == '--gene_bed_path'){
       opts$gene_bed_path <- args[i+1]
@@ -200,8 +196,8 @@ parse_args <- function(){
   if(is.null(opts$genome_name)){
     stop('--genome_name is required')
   }
-  if(is.null(opts$annotation_dir) && is.null(opts$gene_bed_path)){
-    stop('Either --annotation_dir or --gene_bed_path must be provided')
+  if(is.null(opts$gene_bed_path)){
+    stop('--gene_bed_path is required')
   }
 
   if(!dir.exists(opts$work_dir)){
@@ -213,14 +209,7 @@ parse_args <- function(){
 
 opts <- parse_args()
 
-if(!is.null(opts$annotation_dir)){
-  gene_bed <- readRDS(file.path(opts$annotation_dir, 'gene_bed.rds'))
-} else {
-  gene_bed <- read.table(opts$gene_bed_path, header = TRUE)
-  if(!all(c('chr','start','end','strand','gene') %in% colnames(gene_bed))){
-    stop('gene_bed_path must contain chr, start, end, strand, gene columns')
-  }
-}
+gene_bed <- readRDS(opts$gene_bed_path)
 
 LongcellPre::reads_extract_bc(
   fastq_path = opts$fastq_path,

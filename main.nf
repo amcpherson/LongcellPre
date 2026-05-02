@@ -91,7 +91,6 @@ process RUN_ANNOTATION {
     path gene_bed_file
 
     output:
-    path 'annotation'
     path 'annotation/gene_bed.rds'
     path 'annotation/exon_gtf.rds', optional: true
 
@@ -234,7 +233,7 @@ process EXTRACT_AND_INTEGRATE_READS {
     path barcode_file
     path bam_file
     path bai_file
-    path annotation_dir
+    path gene_bed_rds
 
     output:
     path 'BarcodeMatch/BarcodeMatchIso.txt'
@@ -252,7 +251,7 @@ process EXTRACT_AND_INTEGRATE_READS {
     extract_and_integrate_reads.R \
       --fastq_path ${fastq_file} \
       --barcode_path BarcodeMatch/BarcodeMatch.txt \
-      --annotation_dir ${annotation_dir} \
+      --gene_bed_path ${gene_bed_rds} \
       --work_dir . \
       --genome_path ${params.genome_path} \
       --genome_name ${params.genome_name} \
@@ -561,7 +560,7 @@ workflow {
 
                 // Stage 5: UMI deduplication
                 // Use .first() so the single file is broadcast to all parallel chunks
-                gene_bed_rds = annotation_result[1].first()
+                gene_bed_rds = annotation_result[0].first()
                 
                 split_results = SPLIT_UMI_DATA(
                     extract_and_integrate_result[0],  // BarcodeMatchIso.txt
@@ -584,7 +583,7 @@ workflow {
                 // Stage 6: Isoform imputation (conditional on to_isoform flag)
                 if(params.to_isoform && params.gtf_path){
                     // Use .first() so the single GTF file is broadcast to all parallel chunks
-                    gtf_rds = annotation_result[2].first()
+                    gtf_rds = annotation_result[1].first()
 
                     iso_chunks = SPLIT_ISO_INPUT(umi_count_result).flatten()
 
