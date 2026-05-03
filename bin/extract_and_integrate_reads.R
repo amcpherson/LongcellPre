@@ -1,152 +1,50 @@
 #!/usr/bin/env Rscript
 
+# This script performs the isoform extraction and integration step only.
+# Barcode extraction and mapping are handled by earlier Nextflow processes.
+# It mirrors the isoform extraction section of reads_extract_bc() in pipeline.R.
+
 library(LongcellPre)
+library(dplyr)
+library(future)
+library(future.apply)
 
 parse_args <- function(){
   args <- commandArgs(trailingOnly = TRUE)
   opts <- list(
-    fastq_path = NULL,
     barcode_path = NULL,
+    bam_path = NULL,
     gene_bed_path = NULL,
-    work_dir = './',
-    genome_path = NULL,
     genome_name = NULL,
+    work_dir = './',
     toolkit = 5,
-    protocol = '10X',
-    adapter = NULL,
-    minimap_bed_path = NULL,
-    window = 10,
-    step = 2,
-    left_flank = 0,
-    right_flank = 0,
-    drop_adapter = FALSE,
-    polyA_bin = 20,
-    polyA_base_count = 15,
-    polyA_len = 10,
-    barcode_len = 16,
-    mu = 15,
-    sigma = 10,
-    k = 6,
-    batch = 100,
-    top = 5,
-    cos_thresh = 0.25,
-    alpha = 0.05,
-    edit_thresh = 3,
-    mean_edit_thresh = 1.5,
-    UMI_len = 10,
-    UMI_flank = 1,
-    minimap2 = 'minimap2',
-    samtools = 'samtools',
     bedtools = 'bedtools',
     map_qual = 30,
     end_flank = 200,
     splice_site_bin = 2,
-    force_barcode_match = FALSE,
-    force_map = FALSE,
-    force_isoform_extract = FALSE,
-    force_rerun = FALSE,
     cores = 1
   )
 
   i <- 1
   while(i <= length(args)){
     arg <- args[i]
-    if(arg == '--fastq_path'){
-      opts$fastq_path <- args[i+1]
-      i <- i + 2
-    } else if(arg == '--barcode_path'){
+    if(arg == '--barcode_path'){
       opts$barcode_path <- args[i+1]
+      i <- i + 2
+    } else if(arg == '--bam_path'){
+      opts$bam_path <- args[i+1]
       i <- i + 2
     } else if(arg == '--gene_bed_path'){
       opts$gene_bed_path <- args[i+1]
       i <- i + 2
-    } else if(arg == '--work_dir'){
-      opts$work_dir <- args[i+1]
-      i <- i + 2
-    } else if(arg == '--genome_path'){
-      opts$genome_path <- args[i+1]
-      i <- i + 2
     } else if(arg == '--genome_name'){
       opts$genome_name <- args[i+1]
       i <- i + 2
+    } else if(arg == '--work_dir'){
+      opts$work_dir <- args[i+1]
+      i <- i + 2
     } else if(arg == '--toolkit'){
       opts$toolkit <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--protocol'){
-      opts$protocol <- args[i+1]
-      i <- i + 2
-    } else if(arg == '--adapter'){
-      opts$adapter <- args[i+1]
-      i <- i + 2
-    } else if(arg == '--minimap_bed_path'){
-      opts$minimap_bed_path <- args[i+1]
-      i <- i + 2
-    } else if(arg == '--window'){
-      opts$window <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--step'){
-      opts$step <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--left_flank'){
-      opts$left_flank <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--right_flank'){
-      opts$right_flank <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--drop_adapter'){
-      val <- toupper(args[i+1])
-      opts$drop_adapter <- val %in% c('TRUE', 'T', '1')
-      i <- i + 2
-    } else if(arg == '--polyA_bin'){
-      opts$polyA_bin <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--polyA_base_count'){
-      opts$polyA_base_count <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--polyA_len'){
-      opts$polyA_len <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--barcode_len'){
-      opts$barcode_len <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--mu'){
-      opts$mu <- as.numeric(args[i+1])
-      i <- i + 2
-    } else if(arg == '--sigma'){
-      opts$sigma <- as.numeric(args[i+1])
-      i <- i + 2
-    } else if(arg == '--k'){
-      opts$k <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--batch'){
-      opts$batch <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--top'){
-      opts$top <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--cos_thresh'){
-      opts$cos_thresh <- as.numeric(args[i+1])
-      i <- i + 2
-    } else if(arg == '--alpha'){
-      opts$alpha <- as.numeric(args[i+1])
-      i <- i + 2
-    } else if(arg == '--edit_thresh'){
-      opts$edit_thresh <- as.numeric(args[i+1])
-      i <- i + 2
-    } else if(arg == '--mean_edit_thresh'){
-      opts$mean_edit_thresh <- as.numeric(args[i+1])
-      i <- i + 2
-    } else if(arg == '--UMI_len'){
-      opts$UMI_len <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--UMI_flank'){
-      opts$UMI_flank <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--minimap2'){
-      opts$minimap2 <- args[i+1]
-      i <- i + 2
-    } else if(arg == '--samtools'){
-      opts$samtools <- args[i+1]
       i <- i + 2
     } else if(arg == '--bedtools'){
       opts$bedtools <- args[i+1]
@@ -160,22 +58,6 @@ parse_args <- function(){
     } else if(arg == '--splice_site_bin'){
       opts$splice_site_bin <- as.integer(args[i+1])
       i <- i + 2
-    } else if(arg == '--force_barcode_match'){
-      val <- toupper(args[i+1])
-      opts$force_barcode_match <- val %in% c('TRUE', 'T', '1')
-      i <- i + 2
-    } else if(arg == '--force_map'){
-      val <- toupper(args[i+1])
-      opts$force_map <- val %in% c('TRUE', 'T', '1')
-      i <- i + 2
-    } else if(arg == '--force_isoform_extract'){
-      val <- toupper(args[i+1])
-      opts$force_isoform_extract <- val %in% c('TRUE', 'T', '1')
-      i <- i + 2
-    } else if(arg == '--force_rerun'){
-      val <- toupper(args[i+1])
-      opts$force_rerun <- val %in% c('TRUE', 'T', '1')
-      i <- i + 2
     } else if(arg == '--cores'){
       opts$cores <- as.integer(args[i+1])
       i <- i + 2
@@ -184,24 +66,17 @@ parse_args <- function(){
     }
   }
 
-  if(is.null(opts$fastq_path)){
-    stop('--fastq_path is required')
-  }
   if(is.null(opts$barcode_path)){
     stop('--barcode_path is required')
   }
-  if(is.null(opts$genome_path)){
-    stop('--genome_path is required')
-  }
-  if(is.null(opts$genome_name)){
-    stop('--genome_name is required')
+  if(is.null(opts$bam_path)){
+    stop('--bam_path is required')
   }
   if(is.null(opts$gene_bed_path)){
     stop('--gene_bed_path is required')
   }
-
-  if(!dir.exists(opts$work_dir)){
-    dir.create(opts$work_dir, recursive = TRUE)
+  if(is.null(opts$genome_name)){
+    stop('--genome_name is required')
   }
 
   return(opts)
@@ -209,48 +84,74 @@ parse_args <- function(){
 
 opts <- parse_args()
 
+# Set up parallel plan for reads_extraction (uses future_lapply internally)
+cores <- LongcellPre::coreDetect(opts$cores)
+if(cores > 1){
+  plan(strategy = "multisession", workers = cores)
+} else {
+  plan(strategy = "sequential")
+}
+
+# Create output directories
+dir.create(file.path(opts$work_dir, "BarcodeMatch"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(opts$work_dir, "annotation"), showWarnings = FALSE, recursive = TRUE)
+
+# Load inputs
+cat("Loading gene bed annotation...\n")
 gene_bed <- readRDS(opts$gene_bed_path)
 
-LongcellPre::reads_extract_bc(
-  fastq_path = opts$fastq_path,
-  barcode_path = opts$barcode_path,
+cat("Loading barcode match data...\n")
+bc <- read.table(opts$barcode_path, header = TRUE, sep = "\t")
+
+# Filter genes without coverage (bamGeneCoverage)
+cat("Filtering genes without read coverage...\n")
+gene_range <- gene_bed %>%
+  group_by(gene) %>%
+  summarise(chr = unique(chr), start = min(start), end = max(end), strand = unique(strand))
+gene_range <- gene_range[, c("chr", "start", "end", "strand", "gene")]
+gene_range_file <- file.path(opts$work_dir, "annotation/gene_range.txt")
+write.table(gene_range, gene_range_file, sep = "\t", quote = FALSE,
+            row.names = FALSE, col.names = FALSE)
+
+noncover <- bamGeneCoverage(
+  bam = opts$bam_path,
+  gene_range_bed = gene_range_file,
+  outdir = file.path(opts$work_dir, "annotation"),
+  bedtools = opts$bedtools
+)
+if(!is.null(noncover)){
+  gene_bed <- gene_bed %>% filter(!gene %in% noncover$gene)
+}
+
+# Extract isoform information from BAM
+cat("Extracting isoforms from BAM...\n")
+suppressWarnings({genome <- load_genome(opts$genome_name)})
+reads <- reads_extraction(
+  bam_path = opts$bam_path,
   gene_bed = gene_bed,
-  adapter = opts$adapter,
-  genome_path = opts$genome_path,
-  genome_name = opts$genome_name,
+  genome = genome,
   toolkit = opts$toolkit,
-  protocol = opts$protocol,
-  minimap_bed_path = opts$minimap_bed_path,
-  work_dir = opts$work_dir,
-  window = opts$window,
-  step = opts$step,
-  left_flank = opts$left_flank,
-  right_flank = opts$right_flank,
-  drop_adapter = opts$drop_adapter,
-  polyA_bin = opts$polyA_bin,
-  polyA_base_count = opts$polyA_base_count,
-  polyA_len = opts$polyA_len,
-  barcode_len = opts$barcode_len,
-  mu = opts$mu,
-  sigma = opts$sigma,
-  k = opts$k,
-  batch = opts$batch,
-  top = opts$top,
-  cos_thresh = opts$cos_thresh,
-  alpha = opts$alpha,
-  edit_thresh = opts$edit_thresh,
-  mean_edit_thresh = opts$mean_edit_thresh,
-  UMI_len = opts$UMI_len,
-  UMI_flank = opts$UMI_flank,
-  minimap2 = opts$minimap2,
-  samtools = opts$samtools,
-  bedtools = opts$bedtools,
   map_qual = opts$map_qual,
   end_flank = opts$end_flank,
-  splice_site_bin = opts$splice_site_bin,
-  force_barcode_match = opts$force_barcode_match,
-  force_map = opts$force_map,
-  force_isoform_extract = opts$force_isoform_extract,
-  force_rerun = opts$force_rerun,
-  cores = opts$cores
+  splice_site_bin = opts$splice_site_bin
 )
+
+# Integrate barcode data with isoform data
+cat("Integrating barcode and isoform data...\n")
+reads_bc <- inner_join(bc, reads, by = c("name" = "qname"))
+reads_bc <- reads_bc %>%
+  mutate(polyA.x = as.numeric(polyA.x), polyA.y = as.numeric(polyA.y)) %>%
+  mutate(polyA = polyA.x & polyA.y) %>%
+  dplyr::select(-polyA.x, -polyA.y)
+
+saveResult(reads_bc, file.path(opts$work_dir, "BarcodeMatch/BarcodeMatchIso.txt"))
+
+if(nrow(reads_bc) > 0){
+  # Evaluate data quality
+  qual <- adapter_dis(data = reads_bc)
+  saveResult(qual, file.path(opts$work_dir, "BarcodeMatch/adapterNeedle.txt"))
+} else {
+  stop("No read is found with valid barcode, please check if your barcode and fastq file match!")
+}
+
+cat("Isoform extraction and integration completed successfully.\n")

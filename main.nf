@@ -48,7 +48,7 @@ params.polyA_bin = 20
 params.polyA_base_count = 15
 params.polyA_len = 10
 params.barcode_len = 16
-params.mu = 20
+params.mu = 15
 params.sigma = 10
 params.k = 6
 params.batch = 100
@@ -217,7 +217,7 @@ process MAP_POLISHED_FASTQ {
     script:
     def bed_arg = bed_file.name != 'NO_FILE' ? "--junc-bed ${bed_file}" : ''
     """
-    minimap2 -ax splice -uf --sam-hit-only -t ${params.cores} ${bed_arg} ${genome_file} ${fastq_file} | \
+    minimap2 -ax splice -uf --sam-hit-only -t ${params.cores} ${genome_file} ${fastq_file} ${bed_arg} | \
     samtools view -bS -@ ${params.cores} - | \
     samtools sort - -@ ${params.cores} -o polish.bam && \
     samtools index polish.bam
@@ -229,10 +229,9 @@ process EXTRACT_AND_INTEGRATE_READS {
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
-    path fastq_file
-    path barcode_file, stageAs: 'BarcodeMatch/BarcodeMatch.txt'
-    path bam_file, stageAs: 'bam/polish.bam'
-    path bai_file, stageAs: 'bam/polish.bam.bai'
+    path barcode_file
+    path bam_file
+    path bai_file
     path gene_bed_rds
 
     output:
@@ -240,28 +239,19 @@ process EXTRACT_AND_INTEGRATE_READS {
     path 'BarcodeMatch/adapterNeedle.txt'
 
     script:
-    def adapter_arg = params.adapter ? "--adapter ${params.adapter}" : ''
-    def bed_arg = params.minimap_bed_path ? "--minimap_bed_path ${params.minimap_bed_path}" : ''
     """
     mkdir -p annotation
     extract_and_integrate_reads.R \
-      --fastq_path ${fastq_file} \
       --barcode_path ${barcode_file} \
+      --bam_path ${bam_file} \
       --gene_bed_path ${gene_bed_rds} \
-      --work_dir . \
-      --genome_path ${params.genome_path} \
       --genome_name ${params.genome_name} \
+      --work_dir . \
       --toolkit ${params.toolkit} \
-      --protocol ${params.protocol} \
-      ${adapter_arg} \
-      ${bed_arg} \
-      --minimap2 ${params.minimap2} \
-      --samtools ${params.samtools} \
       --bedtools ${params.bedtools} \
       --map_qual ${params.map_qual} \
       --end_flank ${params.end_flank} \
       --splice_site_bin ${params.splice_site_bin} \
-      --mean_edit_thresh ${params.mean_edit_thresh} \
       --cores ${params.cores}
     """
 }
@@ -547,7 +537,6 @@ workflow {
             // Stage 4: Extract isoforms and integrate barcodes
             if(params.genome_name && (params.gtf_path || params.gene_bed_path)){
                 extract_and_integrate_result = EXTRACT_AND_INTEGRATE_READS(
-                    extract_result[0],
                     extract_result[1],
                     mapping_result[0],
                     mapping_result[1],

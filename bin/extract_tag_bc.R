@@ -20,7 +20,7 @@ parse_args <- function(){
     polyA_base_count = 15,
     polyA_len = 10,
     barcode_len = 16,
-    mu = 20,
+    mu = 15,
     sigma = 10,
     k = 6,
     batch = 100,
