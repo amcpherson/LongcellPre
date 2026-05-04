@@ -5,6 +5,7 @@
 #'
 #' @param cores Number of cores used to do parallization.
 #' @importFrom parallel detectCores
+#' @export
 coreDetect = function(cores){
   cores = as.numeric(cores)
   max_cores = parallel::detectCores()
