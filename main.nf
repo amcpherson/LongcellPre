@@ -116,7 +116,7 @@ process SPLIT_FASTQ {
     script:
     """
     # Split FASTQ into chunks (4 lines per FASTQ record)
-    gunzip -c '${fastq_file}' | split -l \$((${params.fastq_chunk_size} * 4)) --numeric-suffixes=1 -d - chunk_raw_
+    gunzip -c '${fastq_file}' | split -l \$((${params.fastq_chunk_size} * 4)) -a 4 --numeric-suffixes=1 -d - chunk_raw_
     
     # Compress each chunk
     for f in chunk_raw_*; do
