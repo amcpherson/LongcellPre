@@ -5,6 +5,7 @@
 #' @importFrom BSgenome getBSgenome
 #' @importFrom BiocManager install
 #' @return A BSgenome object
+#' @export
 load_genome <- function(genome_name) {
   genome_list = BSgenome::available.genomes()
 

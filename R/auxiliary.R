@@ -5,6 +5,7 @@
 #'
 #' @param data A dataframe
 #' @param filename The output filename
+#' @export
 saveResult = function(data,filename,sep = "\t"){
   write.table(data,file  = filename,sep = sep,quote = FALSE,row.names = FALSE)
 }

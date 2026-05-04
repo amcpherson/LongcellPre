@@ -135,6 +135,7 @@ fastqMap = function(fastq,out_name,genome_path,bed_path = NULL,
 #' @param outdir The folder to store the output file.
 #' @param bedtools The path for the bedtools.
 #' @return A bed file including all genes without read alignment in the bam file.
+#' @export
 bamGeneCoverage = function(bam,gene_range_bed,outdir,bedtools = "bedtools"){
   command1 = paste(c(bedtools, "bamtobed -i", bam, "|",
                      bedtools, "merge -i - > ", file.path(outdir,"cover.bed")),collapse = " ")

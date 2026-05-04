@@ -186,6 +186,7 @@ extractTagBc = function(fastq_path,barcode_path,out_name,
 #' @importFrom NameNeedle needleScores
 #' @return A dataframe with two columns, the first is the edit distance and the secons is
 #' how many adapters have such an edit distance to the original adapter
+#' @export
 adapter_dis = function(data){
   len = unique(nchar(data$umi))
   adapter = data %>%
