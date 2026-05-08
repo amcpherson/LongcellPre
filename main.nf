@@ -33,7 +33,7 @@ params.map_qual = 30
 params.end_flank = 200
 params.splice_site_bin = 2
 params.mean_edit_thresh = 1.5
-params.work_dir = 'test_data/nextflow_annotation_output'
+params.results_dir = 'results'
 params.overwrite = true
 params.cores = 4
 params.to_isoform = true
@@ -83,7 +83,7 @@ params.minimap2 = "minimap2"
 params.samtools = "samtools"
 
 process RUN_ANNOTATION {
-    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
+    publishDir "${params.results_dir}", mode: 'copy', overwrite: true
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
@@ -189,7 +189,7 @@ process MERGE_POLISH_FASTQ {
     path 'polish.fq.gz'
     path 'BarcodeMatch.txt'
 
-    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
+    publishDir "${params.results_dir}", mode: 'copy', overwrite: true
 
     script:
     """
@@ -202,7 +202,7 @@ process MERGE_POLISH_FASTQ {
 }
 
 process MAP_POLISHED_FASTQ {
-    publishDir "${params.work_dir}/bam", mode: 'copy', overwrite: true
+    publishDir "${params.results_dir}/bam", mode: 'copy', overwrite: true
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
@@ -291,7 +291,7 @@ process EXTRACT_AND_INTEGRATE_READS_CHUNK {
 }
 
 process MERGE_ISOFORM_READS {
-    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
+    publishDir "${params.results_dir}", mode: 'copy', overwrite: true
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
@@ -399,7 +399,7 @@ process UMI_COUNT_PARALLEL_CHUNK {
 }
 
 process MERGE_UMI_COUNT {
-    publishDir "${params.work_dir}/out", mode: 'copy', overwrite: true
+    publishDir "${params.results_dir}/out", mode: 'copy', overwrite: true
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
@@ -482,7 +482,7 @@ process UMI_COUNT_TO_ISOFORM_CHUNK {
 }
 
 process MERGE_ISO_MAT {
-    publishDir "${params.work_dir}/out", mode: 'copy', overwrite: true
+    publishDir "${params.results_dir}/out", mode: 'copy', overwrite: true
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
@@ -515,7 +515,7 @@ process MERGE_ISO_MAT {
 }
 
 process UMI_CONSENSUS_OUT {
-    publishDir "${params.work_dir}/out", mode: 'copy', overwrite: true
+    publishDir "${params.results_dir}/out", mode: 'copy', overwrite: true
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
