@@ -116,6 +116,93 @@ python isoquant.py --reference $GENOME_PATH \
 --clean_start
 ```
 
+## Nextflow Usage
+
+The LongcellPre pipeline is also available as a Nextflow DSL2 workflow for scalable, containerized execution. This version orchestrates all 7 stages of the pipeline with automatic dependency resolution and built-in parallelization.
+
+### Requirements
+
+- **Nextflow**: version 24.04.4 or later
+- **Docker** or **Singularity**: for containerized execution
+- **Optional**: micromamba for environment management
+
+### Quick Start
+
+Run directly from GitHub without cloning:
+
+```bash
+# Basic command with GTF annotation
+nextflow run yuntianf/LongcellPre \
+  --gtf_path <path_to_gtf> \
+  --fastq_path <path_to_fastq> \
+  --barcode_path <path_to_barcodes> \
+  --genome_path <path_to_genome> \
+  --genome_name <BSgenome_name> \
+  --cores 4
+
+# With gene BED instead of GTF
+nextflow run yuntianf/LongcellPre \
+  --gene_bed_path <path_to_gene_bed> \
+  --fastq_path <path_to_fastq> \
+  --barcode_path <path_to_barcodes> \
+  --genome_path <path_to_genome> \
+  --genome_name <BSgenome_name> \
+  --results_dir ./output \
+  --cores 4
+```
+
+### Nextflow Parameters
+
+Key parameters for the Nextflow workflow:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `gtf_path` | null | Path to GTF annotation file |
+| `gene_bed_path` | null | Path to gene BED annotation (alternative to GTF) |
+| `fastq_path` | null | **Required**: Path to input FASTQ file |
+| `barcode_path` | null | **Required**: Path to cell barcode whitelist |
+| `genome_path` | null | **Required**: Path to reference genome FASTA |
+| `genome_name` | null | **Required**: BSgenome name (e.g., `BSgenome.Hsapiens.UCSC.hg38`) |
+| `minimap_bed_path` | null | BED file with splicing sites for minimap2 |
+| `toolkit` | 5 | Sequencing toolkit: 5 or 3 |
+| `protocol` | '10X' | Sequencing protocol (10X, VISIUM, Curio, other) |
+| `cores` | 4 | Number of CPU cores for parallelization |
+| `results_dir` | 'results' | Output directory for results |
+| `to_isoform` | true | Generate cell-by-isoform matrix (requires GTF) |
+| `map_qual` | 30 | Mapping quality threshold |
+| `end_flank` | 200 | End flanking region for reads |
+| `splice_site_bin` | 2 | Splice site bin size |
+| `fastq_chunk_size` | 1000000 | Number of reads per FASTQ chunk for barcode extraction |
+| `genes_per_chunk` | 500 | Approximate number of genes per chunk for UMI counting and isoform imputation |
+
+### Example with Test Data
+
+```bash
+# Run with demo data (from test_data/)
+nextflow run yuntianf/LongcellPre \
+  --gtf_path test_data/gencode.v39.sub.gtf \
+  --fastq_path test_data/example.fq.gz \
+  --barcode_path test_data/barcodes.txt \
+  --genome_path test_data/genome.fa \
+  --genome_name BSgenome.Hsapiens.UCSC.hg38 \
+  --results_dir ./demo_output \
+  --cores 4
+```
+
+### Pipeline Stages
+
+The Nextflow workflow implements all 7 stages of LongcellPre, with built-in chunking for parallelization:
+
+1. **RUN_ANNOTATION** - Generate gene annotation from GTF/BED
+2. **EXTRACT_TAG_BC** - Split FASTQ into chunks (`fastq_chunk_size` reads each), extract barcodes/UMI from each chunk in parallel, then merge polished FASTQ and barcode results
+3. **MAP_POLISHED_FASTQ** - Map polished reads to genome with minimap2
+4. **EXTRACT_AND_INTEGRATE_READS** - Filter genes with BAM coverage, split gene BED into chunks (`genes_per_chunk`), extract isoforms and integrate barcodes for each chunk in parallel, then merge
+5. **UMI_COUNT** - Split barcode/isoform data into gene chunks, run UMI deduplication for each chunk in parallel, then merge
+6. **UMI_COUNT_TO_ISOFORM** - Split UMI counts into gene chunks, run isoform imputation for each chunk in parallel, then merge (optional, requires GTF)
+7. **UMI_CONSENSUS_OUT** - Generate UMI-collapsed FASTQ and BAM
+
+All stages run in Docker containers for reproducibility and are automatically orchestrated by Nextflow. Chunking parameters (`fastq_chunk_size`, `genes_per_chunk`) control the granularity of parallelization.
+
 ## Citation
 
 If you use Longcell for published work, please cite our manuscript:
