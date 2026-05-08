@@ -1,8 +1,10 @@
 #!/usr/bin/env Rscript
 
-# This script performs the isoform extraction and integration step only.
-# Barcode extraction and mapping are handled by earlier Nextflow processes.
-# It mirrors the isoform extraction section of reads_extract_bc() in pipeline.R.
+# This script performs the isoform extraction and integration step for a
+# gene chunk. Gene coverage filtering and gene-bed splitting are handled
+# by earlier Nextflow processes (FILTER_GENE_BED / SPLIT_GENE_BED).
+# Each chunk is processed sequentially — Nextflow handles parallelism
+# across chunks.
 
 library(LongcellPre)
 library(dplyr)
@@ -18,7 +20,6 @@ parse_args <- function(){
     genome_name = NULL,
     work_dir = './',
     toolkit = 5,
-    bedtools = 'bedtools',
     map_qual = 30,
     end_flank = 200,
     splice_site_bin = 2,
@@ -45,9 +46,6 @@ parse_args <- function(){
       i <- i + 2
     } else if(arg == '--toolkit'){
       opts$toolkit <- as.integer(args[i+1])
-      i <- i + 2
-    } else if(arg == '--bedtools'){
-      opts$bedtools <- args[i+1]
       i <- i + 2
     } else if(arg == '--map_qual'){
       opts$map_qual <- as.integer(args[i+1])
@@ -84,7 +82,9 @@ parse_args <- function(){
 
 opts <- parse_args()
 
-# Set up parallel plan for reads_extraction (uses future_lapply internally)
+# Use sequential plan — Nextflow handles parallelism across gene chunks.
+# Only use multisession if cores > 1 is explicitly requested for within-chunk
+# parallelism (e.g. when running outside Nextflow).
 cores <- LongcellPre::coreDetect(opts$cores)
 if(cores > 1){
   plan(strategy = "multisession", workers = cores)
@@ -92,38 +92,15 @@ if(cores > 1){
   plan(strategy = "sequential")
 }
 
-# Create output directories
-dir.create(file.path(opts$work_dir, "BarcodeMatch"), showWarnings = FALSE, recursive = TRUE)
-dir.create(file.path(opts$work_dir, "annotation"), showWarnings = FALSE, recursive = TRUE)
-
 # Load inputs
-cat("Loading gene bed annotation...\n")
+cat("Loading gene bed chunk...\n")
 gene_bed <- readRDS(opts$gene_bed_path)
+cat("Gene chunk contains", length(unique(gene_bed$gene)), "genes\n")
 
 cat("Loading barcode match data...\n")
 bc <- read.table(opts$barcode_path, header = TRUE, sep = "\t")
 
-# Filter genes without coverage (bamGeneCoverage)
-cat("Filtering genes without read coverage...\n")
-gene_range <- gene_bed %>%
-  group_by(gene) %>%
-  summarise(chr = unique(chr), start = min(start), end = max(end), strand = unique(strand))
-gene_range <- gene_range[, c("chr", "start", "end", "strand", "gene")]
-gene_range_file <- file.path(opts$work_dir, "annotation/gene_range.txt")
-write.table(gene_range, gene_range_file, sep = "\t", quote = FALSE,
-            row.names = FALSE, col.names = FALSE)
-
-noncover <- bamGeneCoverage(
-  bam = opts$bam_path,
-  gene_range_bed = gene_range_file,
-  outdir = file.path(opts$work_dir, "annotation"),
-  bedtools = opts$bedtools
-)
-if(!is.null(noncover)){
-  gene_bed <- gene_bed %>% filter(!gene %in% noncover$gene)
-}
-
-# Extract isoform information from BAM
+# Extract isoform information from BAM for this gene chunk
 cat("Extracting isoforms from BAM...\n")
 suppressWarnings({genome <- load_genome(opts$genome_name)})
 reads <- reads_extraction(
@@ -144,14 +121,7 @@ reads_bc <- reads_bc %>%
   mutate(polyA = polyA.x & polyA.y) %>%
   dplyr::select(-polyA.x, -polyA.y)
 
-saveResult(reads_bc, file.path(opts$work_dir, "BarcodeMatch/BarcodeMatchIso.txt"))
-
-if(nrow(reads_bc) > 0){
-  # Evaluate data quality
-  qual <- adapter_dis(data = reads_bc)
-  saveResult(qual, file.path(opts$work_dir, "BarcodeMatch/adapterNeedle.txt"))
-} else {
-  stop("No read is found with valid barcode, please check if your barcode and fastq file match!")
-}
-
-cat("Isoform extraction and integration completed successfully.\n")
+out_path <- file.path(opts$work_dir, "BarcodeMatchIso_chunk.txt")
+saveResult(reads_bc, out_path)
+cat("Wrote", nrow(reads_bc), "rows to", out_path, "\n")
+cat("Chunk extraction and integration completed successfully.\n")

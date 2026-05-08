@@ -77,7 +77,7 @@ params.sep = ","
 // FASTQ chunking parameters
 params.fastq_chunk_size = 1000000  // Number of reads per chunk (1M default)
 // UMI counting chunking parameters
-params.genes_per_chunk = 50  // Approximate number of genes per chunk
+params.genes_per_chunk = 500  // Approximate number of genes per chunk
 // Tool paths
 params.minimap2 = "minimap2"
 params.samtools = "samtools"
@@ -224,15 +224,78 @@ process MAP_POLISHED_FASTQ {
     """
 }
 
-process EXTRACT_AND_INTEGRATE_READS {
-    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
+process FILTER_GENE_BED {
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path bam_file
+    path bai_file
+    path gene_bed_rds
+
+    output:
+    path 'gene_bed_filtered.rds'
+
+    script:
+    """
+    filter_gene_bed.R \
+      --bam_path ${bam_file} \
+      --gene_bed_path ${gene_bed_rds} \
+      --bedtools ${params.bedtools} \
+      --out_path gene_bed_filtered.rds
+    """
+}
+
+process SPLIT_GENE_BED {
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path gene_bed_rds
+
+    output:
+    path 'gene_bed_chunk_*.rds'
+
+    script:
+    """
+    split_gene_bed.R \
+      --gene_bed_path ${gene_bed_rds} \
+      --genes_per_chunk ${params.genes_per_chunk}
+    """
+}
+
+process EXTRACT_AND_INTEGRATE_READS_CHUNK {
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
     path barcode_file
     path bam_file
     path bai_file
-    path gene_bed_rds
+    path gene_bed_chunk
+
+    output:
+    path 'BarcodeMatchIso_chunk.txt'
+
+    script:
+    """
+    extract_and_integrate_reads.R \
+      --barcode_path ${barcode_file} \
+      --bam_path ${bam_file} \
+      --gene_bed_path ${gene_bed_chunk} \
+      --genome_name ${params.genome_name} \
+      --work_dir . \
+      --toolkit ${params.toolkit} \
+      --map_qual ${params.map_qual} \
+      --end_flank ${params.end_flank} \
+      --splice_site_bin ${params.splice_site_bin} \
+      --cores 1
+    """
+}
+
+process MERGE_ISOFORM_READS {
+    publishDir "${params.work_dir}", mode: 'copy', overwrite: true
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path 'chunk_*.txt'
 
     output:
     path 'BarcodeMatch/BarcodeMatchIso.txt'
@@ -240,19 +303,9 @@ process EXTRACT_AND_INTEGRATE_READS {
 
     script:
     """
-    mkdir -p annotation
-    extract_and_integrate_reads.R \
-      --barcode_path ${barcode_file} \
-      --bam_path ${bam_file} \
-      --gene_bed_path ${gene_bed_rds} \
-      --genome_name ${params.genome_name} \
-      --work_dir . \
-      --toolkit ${params.toolkit} \
-      --bedtools ${params.bedtools} \
-      --map_qual ${params.map_qual} \
-      --end_flank ${params.end_flank} \
-      --splice_site_bin ${params.splice_site_bin} \
-      --cores ${params.cores}
+    merge_isoform_reads.R \
+      --chunk_dir . \
+      --out_dir .
     """
 }
 
@@ -534,13 +587,33 @@ workflow {
                 bed
             )
 
-            // Stage 4: Extract isoforms and integrate barcodes
+            // Stage 4: Extract isoforms and integrate barcodes (chunked by gene)
             if(params.genome_name && (params.gtf_path || params.gene_bed_path)){
-                extract_and_integrate_result = EXTRACT_AND_INTEGRATE_READS(
-                    extract_result[1],
+                // 4a: Filter genes without BAM coverage (once)
+                filtered_gene_bed = FILTER_GENE_BED(
                     mapping_result[0],
                     mapping_result[1],
                     annotation_result[0]
+                )
+
+                // 4b: Split filtered gene bed into chunks
+                gene_bed_chunks = SPLIT_GENE_BED(filtered_gene_bed).flatten()
+
+                // 4c: Extract and integrate each chunk in parallel
+                barcode_file_ch = extract_result[1].first()
+                bam_ch = mapping_result[0].first()
+                bai_ch = mapping_result[1].first()
+
+                chunk_iso_results = EXTRACT_AND_INTEGRATE_READS_CHUNK(
+                    barcode_file_ch,
+                    bam_ch,
+                    bai_ch,
+                    gene_bed_chunks
+                )
+
+                // 4d: Merge chunk results
+                extract_and_integrate_result = MERGE_ISOFORM_READS(
+                    chunk_iso_results.collect()
                 )
 
                 // Stage 5: UMI deduplication
