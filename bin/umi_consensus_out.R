@@ -30,6 +30,9 @@ force_fastq_out <- as.logical(force_fastq_out)
 force_map <- parser_args[["force_map"]] %||% "FALSE"
 force_map <- as.logical(force_map)
 
+# Increase future globals size limit for parallel workers
+options(future.globals.maxSize = 24 * 1024^3)
+
 # Load libraries
 library(LongcellPre)
 library(Rsamtools)
