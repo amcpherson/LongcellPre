@@ -11,6 +11,9 @@ library(dplyr)
 library(future)
 library(future.apply)
 
+# Increase future globals size limit for parallel workers
+options(future.globals.maxSize = 24 * 1024^3)
+
 parse_args <- function(){
   args <- commandArgs(trailingOnly = TRUE)
   opts <- list(
