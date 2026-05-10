@@ -157,6 +157,7 @@ isoformCount2Reads = function(mat,genome,gene_bed,filename,
 #' @param annot The prefix of the annotation to be extracted
 #' @importFrom stringr str_extract
 #' @return A vector of string which stores the annotations.
+#' @export
 extractAnnotFromQname = function(qname,annot = "cell"){
   regrex = paste(c("(?<=",annot,"=)[^|]+"),collapse = "")
   out = str_extract(qname, "(?<=cell=)[^|]+")
