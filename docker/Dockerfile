@@ -50,7 +50,7 @@ RUN R -e "BiocManager::install(c('rtracklayer', 'ShortRead', 'BSgenome'), ask=FA
 
 # Install LongcellPre dependencies
 RUN R -e "remotes::install_github('yuntianf/Longcellsrc')"
-RUN R -e "remotes::install_github('amcpherson/LongcellPre', dependencies=TRUE)"
+RUN R -e "remotes::install_github('amcpherson/LongcellPre@6d2d884fe773cf4ee6aec5f4dc62e747b90b23c5', dependencies=TRUE)"
 
 # Clone the LongcellPre repository to access exec/ scripts
 RUN git clone https://github.com/yuntianf/LongcellPre.git /opt/LongcellPre
