@@ -514,13 +514,68 @@ process MERGE_ISO_MAT {
     """
 }
 
-process UMI_CONSENSUS_OUT {
-    publishDir "${params.results_dir}/out", mode: 'copy', overwrite: true
+process SPLIT_CONSENSUS_INPUT {
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
     path umi_count_file
+
+    output:
+    path 'consensus_chunk_*.txt'
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+
+    data <- read.table('${umi_count_file}', header = TRUE, sep = "\\t", stringsAsFactors = FALSE)
+
+    genes <- unique(data\$gene)
+    n_genes <- length(genes)
+    n_chunks <- max(1, ceiling(n_genes / ${params.genes_per_chunk}))
+
+    cat("Splitting", n_genes, "genes into", n_chunks, "consensus chunks\\n")
+
+    gene_chunks <- split(genes, ceiling(seq_along(genes) / max(1, n_genes / n_chunks)))
+
+    for (i in seq_along(gene_chunks)) {
+        chunk_data <- data[data\$gene %in% gene_chunks[[i]], ]
+        chunk_file <- paste0('consensus_chunk_', sprintf('%03d', i), '.txt')
+        write.table(chunk_data, file = chunk_file, sep = "\\t", quote = FALSE,
+                    row.names = FALSE, col.names = TRUE)
+        cat("Wrote", nrow(chunk_data), "rows to", chunk_file, "\\n")
+    }
+    """
+}
+
+process UMI_CONSENSUS_FASTQ_CHUNK {
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path umi_count_chunk
     path gene_bed_file
+
+    output:
+    path 'chunk.fq.gz'
+    path 'chunk_annot.csv'
+
+    script:
+    """
+    umi_consensus_fastq_chunk.R \
+      --umi_count_path ${umi_count_chunk} \
+      --gene_bed_path ${gene_bed_file} \
+      --genome_name ${params.genome_name} \
+      --out_fastq chunk.fq.gz \
+      --out_annot chunk_annot.csv
+    """
+}
+
+process MERGE_CONSENSUS_AND_MAP {
+    publishDir "${params.results_dir}/out", mode: 'copy', overwrite: true
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path 'chunk_*.fq.gz'
+    path 'annot_*.csv'
     path genome_file
     path bed_file
 
@@ -528,21 +583,23 @@ process UMI_CONSENSUS_OUT {
     path 'UMI_collapsed.fq.gz'
     path 'reads_annot.csv'
     path 'UMI_collapsed.bam'
+    path 'UMI_collapsed.bam.bai'
 
     script:
-    def bed_arg = bed_file.name != 'NO_FILE' ? "--minimap_bed_path ${bed_file}" : ''
+    def bed_arg = bed_file.name != 'NO_FILE' ? "--junc-bed ${bed_file}" : ''
     """
-    mkdir -p out
-    umi_consensus_out.R \
-      --umi_count_path ${umi_count_file} \
-      --gene_bed_path ${gene_bed_file} \
-      --genome_path ${genome_file} \
-      --genome_name ${params.genome_name} \
-      ${bed_arg} \
-      --minimap2 ${params.minimap2} \
-      --samtools ${params.samtools} \
-      --out_dir . \
-      --cores ${params.cores}
+    # Merge FASTQ chunks
+    cat chunk_*.fq.gz > UMI_collapsed.fq.gz
+
+    # Merge annotation CSVs (keep header from first file only)
+    awk 'FNR==1 && NR>1 { next; } { print }' annot_*.csv > reads_annot.csv
+
+    # Map merged FASTQ to genome
+    ${params.minimap2} -ax splice -uf --sam-hit-only -t ${params.cores} \
+      ${genome_file} UMI_collapsed.fq.gz ${bed_arg} | \
+    ${params.samtools} view -bS -@ ${params.cores} - | \
+    ${params.samtools} sort - -@ ${params.cores} -o UMI_collapsed.bam && \
+    ${params.samtools} index UMI_collapsed.bam
     """
 }
 
@@ -655,10 +712,17 @@ workflow {
                     )
                 }
 
-                // Stage 7: UMI consensus output and remapping
-                consensus_result = UMI_CONSENSUS_OUT(
-                    umi_count_result,
-                    gene_bed_rds,
+                // Stage 7: UMI consensus output and remapping (chunked)
+                consensus_chunks = SPLIT_CONSENSUS_INPUT(umi_count_result).flatten()
+
+                consensus_fastq_results = UMI_CONSENSUS_FASTQ_CHUNK(
+                    consensus_chunks,
+                    gene_bed_rds
+                )
+
+                consensus_result = MERGE_CONSENSUS_AND_MAP(
+                    consensus_fastq_results[0].collect(),
+                    consensus_fastq_results[1].collect(),
                     genome,
                     bed
                 )
