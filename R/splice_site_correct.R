@@ -216,6 +216,32 @@ mid_correct_input = function(cells,cluster,gene_isoform){
   return(out)
 }
 
+#' @title is_truncation_of
+#' Check if one mid pattern is a truncation of another
+#'
+#' @description
+#' Tests whether \code{child} is consistent with being a truncated observation
+#' of \code{parent}: the child's observable window must be contained within the
+#' parent's, and they must agree on all jointly observable sites.
+#'
+#' @param child A comma-separated mid string.
+#' @param parent A comma-separated mid string.
+#' @param sep The separator character.
+#' @return TRUE if child is a truncation of parent, FALSE otherwise.
+is_truncation_of <- function(child, parent, sep = ",") {
+  cv <- as.numeric(strsplit(child, sep, fixed = TRUE)[[1]])
+  pv <- as.numeric(strsplit(parent, sep, fixed = TRUE)[[1]])
+  if (length(cv) != length(pv)) return(FALSE)
+  # child observable window must be subset of parent observable window
+  c_obs <- !is.na(cv)
+  p_obs <- !is.na(pv)
+  if (any(c_obs & !p_obs)) return(FALSE)
+  # where both can observe, values must agree
+  both <- c_obs & p_obs
+  if (any(cv[both] != pv[both])) return(FALSE)
+  TRUE
+}
+
 #' @title mid_coexist_fast
 #' Collapse per-(cell, cluster) mids into a consensus and coexistence map (fast)
 #'
@@ -281,18 +307,12 @@ mid_correct_input = function(cells,cluster,gene_isoform){
 #' @export
 
 mid_coexist_fast <- function(data) {
-  # Precompute once (same as your pipeline)
+  # Precompute mid lengths (cheap)
   total  <- names(sort(table(data$mid), decreasing = TRUE))
-  # cat("mid_len\n")
-  len    <- mid_len(total)        # expects cols: mid, size
-  # cat("mid_group\n")
-  parent <- mid_group(total)      # expects cols: c (child), p (parent)
+  len    <- mid_len(total)
 
-  # cat("mid_group finish\n")
   DT  <- as.data.table(data)
   LEN <- as.data.table(len);    setnames(LEN, c("mid","size"))
-  P   <- as.data.table(parent); setnames(P,   c("c","p"))
-  if (nrow(P)) setkey(P, c, p)
 
   # 1) counts per (cell, cluster, mid)
   CNT <- DT[, .N, by = .(cell, cluster, mid)]
@@ -312,12 +332,12 @@ mid_coexist_fast <- function(data) {
   res_one  <- groups1[, .(from = mid, to = mid, count = N)]
   cons_one <- groups1[, .(cell, cluster, concensus = mid)]
 
-  # 4) groups with two mids: check parent relation both directions
+  # 4) groups with two mids: check parent relation via lazy pairwise test
   groups2[, other_mid := mid[.N:1L], by = .(cell, cluster)]
-  if (nrow(P)) {
-    groups2[, is_child_of_other := P[.SD, on = .(c = mid, p = other_mid), .N, by = .EACHI]$N > 0]
+  if (nrow(groups2) > 0) {
+    groups2[, is_child_of_other := mapply(is_truncation_of, mid, other_mid)]
   } else {
-    groups2[, is_child_of_other := FALSE]
+    groups2[, is_child_of_other := logical(0)]
   }
 
   # >>> FIX: compute locals inside {...} and use them <<<
