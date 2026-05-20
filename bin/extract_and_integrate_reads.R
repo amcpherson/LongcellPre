@@ -101,7 +101,7 @@ gene_bed <- readRDS(opts$gene_bed_path)
 cat("Gene chunk contains", length(unique(gene_bed$gene)), "genes\n")
 
 cat("Loading barcode match data...\n")
-bc <- read.table(opts$barcode_path, header = TRUE, sep = "\t")
+bc <- read.table(opts$barcode_path, header = TRUE, sep = "\t", quote = "", comment.char = "")
 
 # Extract isoform information from BAM for this gene chunk
 cat("Extracting isoforms from BAM...\n")
