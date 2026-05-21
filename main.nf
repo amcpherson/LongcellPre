@@ -325,8 +325,8 @@ process SPLIT_UMI_DATA {
     #!/usr/bin/env Rscript
     
     # Load data files
-    data <- read.table('${barcode_iso_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-    qual <- read.table('${adapter_needle_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+    data <- read.table('${barcode_iso_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
+    qual <- read.table('${adapter_needle_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
     
     # Get unique genes and split into chunks
     genes <- unique(data\$gene)
@@ -432,7 +432,7 @@ process SPLIT_ISO_INPUT {
     """
     #!/usr/bin/env Rscript
 
-    data <- read.table('${umi_count_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+    data <- read.table('${umi_count_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
 
     genes <- unique(data\$gene)
     n_genes <- length(genes)
@@ -502,7 +502,7 @@ process MERGE_ISO_MAT {
     cat("Merging", length(files), "isoform count chunks\\n")
 
     chunks <- lapply(files, function(f) {
-        read.table(f, header = TRUE, sep = "\\t", stringsAsFactors = FALSE)
+        read.table(f, header = TRUE, sep = "\\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
     })
     combined <- as.data.frame(do.call(rbind, chunks))
     # Drop empty-header rows from chunks with no results
@@ -527,7 +527,7 @@ process SPLIT_CONSENSUS_INPUT {
     """
     #!/usr/bin/env Rscript
 
-    data <- read.table('${umi_count_file}', header = TRUE, sep = "\\t", stringsAsFactors = FALSE)
+    data <- read.table('${umi_count_file}', header = TRUE, sep = "\\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
 
     genes <- unique(data\$gene)
     n_genes <- length(genes)
