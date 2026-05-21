@@ -41,8 +41,8 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 # Load input data
 cat("Loading input data...\n")
-data <- read.table(data_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-qual <- read.table(qual_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+data <- read.table(data_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
+qual <- read.table(qual_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
 gene_bed <- readRDS(gene_bed_path)
 
 # Get gene strand info
