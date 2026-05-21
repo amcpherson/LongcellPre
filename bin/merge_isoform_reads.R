@@ -38,7 +38,7 @@ files <- sort(list.files(opts$chunk_dir, pattern = "^chunk_.*\\.txt$", full.name
 cat("Merging", length(files), "isoform extraction chunks\n")
 
 chunks <- lapply(files, function(f) {
-  read.table(f, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+  read.table(f, header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
 })
 reads_bc <- as.data.frame(do.call(rbind, chunks))
 cat("Combined", nrow(reads_bc), "rows\n")
