@@ -178,31 +178,25 @@ process EXTRACT_TAG_BC_CHUNK {
     """
 }
 
-process MERGE_POLISH_FASTQ {
+process MERGE_BARCODE_MATCH {
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
-    path 'polish_*.fq.gz'
     path 'barcode_*.txt'
 
     output:
-    path 'polish.fq.gz'
     path 'BarcodeMatch.txt'
 
     publishDir "${params.results_dir}", mode: 'copy', overwrite: true
 
     script:
     """
-    # Merge polish FASTQ files
-    cat polish_*.fq.gz > polish.fq.gz
-    
     # Merge barcode match files, keeping header from first file
     awk 'FNR==1 && NR>1 { next; } { print }' barcode_*.txt > BarcodeMatch.txt
     """
 }
 
-process MAP_POLISHED_FASTQ {
-    publishDir "${params.results_dir}/bam", mode: 'copy', overwrite: true
+process MAP_POLISHED_FASTQ_CHUNK {
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
 
     input:
@@ -211,16 +205,32 @@ process MAP_POLISHED_FASTQ {
     path bed_file
 
     output:
-    path 'polish.bam'
-    path 'polish.bam.bai'
+    path '*.bam'
 
     script:
     def bed_arg = bed_file.name != 'NO_FILE' ? "--junc-bed ${bed_file}" : ''
     """
-    minimap2 -ax splice -uf --sam-hit-only -t ${params.cores} ${genome_file} ${fastq_file} ${bed_arg} | \
-    samtools view -bS -@ ${params.cores} - | \
-    samtools sort - -@ ${params.cores} -o polish.bam && \
-    samtools index polish.bam
+    ${params.minimap2} -ax splice -uf --sam-hit-only -t ${params.cores} ${genome_file} ${fastq_file} ${bed_arg} | \
+    ${params.samtools} view -bS -@ ${params.cores} - | \
+    ${params.samtools} sort - -@ ${params.cores} -o chunk.bam
+    """
+}
+
+process MERGE_BAM {
+    publishDir "${params.results_dir}/bam", mode: 'copy', overwrite: true
+    container 'quay.io/andrew_mcpherson/longcellpre:latest'
+
+    input:
+    path 'chunk_*.bam'
+
+    output:
+    path 'polish.bam'
+    path 'polish.bam.bai'
+
+    script:
+    """
+    ${params.samtools} merge -@ ${params.cores} polish.bam chunk_*.bam
+    ${params.samtools} index polish.bam
     """
 }
 
@@ -245,22 +255,6 @@ process FILTER_GENE_BED {
     """
 }
 
-process SPLIT_GENE_BED {
-    container 'quay.io/andrew_mcpherson/longcellpre:latest'
-
-    input:
-    path gene_bed_rds
-
-    output:
-    path 'gene_bed_chunk_*.rds'
-
-    script:
-    """
-    split_gene_bed.R \
-      --gene_bed_path ${gene_bed_rds} \
-      --genes_per_chunk ${params.genes_per_chunk}
-    """
-}
 
 process EXTRACT_AND_INTEGRATE_READS_CHUNK {
     container 'quay.io/andrew_mcpherson/longcellpre:latest'
@@ -268,7 +262,6 @@ process EXTRACT_AND_INTEGRATE_READS_CHUNK {
     input:
     path barcode_file
     path bam_file
-    path bai_file
     path gene_bed_chunk
 
     output:
@@ -276,6 +269,8 @@ process EXTRACT_AND_INTEGRATE_READS_CHUNK {
 
     script:
     """
+    ${params.samtools} index ${bam_file}
+
     extract_and_integrate_reads.R \
       --barcode_path ${barcode_file} \
       --bam_path ${bam_file} \
@@ -628,44 +623,42 @@ workflow {
             barcode
         )
         
-        extract_result = MERGE_POLISH_FASTQ(
-            chunk_results[0].collect(),
+        merged_barcode = MERGE_BARCODE_MATCH(
             chunk_results[1].collect()
         )
         
-        // Stage 3: Map polished FASTQ to genome
+        // Stage 3: Map polished FASTQ chunks to genome (parallel)
         if(params.genome_path){
             genome = file(params.genome_path)
             bed = params.minimap_bed_path ? file(params.minimap_bed_path) : file('NO_FILE')
             
-            mapping_result = MAP_POLISHED_FASTQ(
-                extract_result[0],  // polish.fq.gz
+            bam_chunks = MAP_POLISHED_FASTQ_CHUNK(
+                chunk_results[0],
                 genome,
                 bed
             )
 
-            // Stage 4: Extract isoforms and integrate barcodes (chunked by gene)
+            mapping_result = MERGE_BAM(
+                bam_chunks.collect()
+            )
+
+            // Stage 4: Extract isoforms and integrate barcodes
             if(params.genome_name && (params.gtf_path || params.gene_bed_path)){
-                // 4a: Filter genes without BAM coverage (once)
+                // Filter genes without BAM coverage
                 filtered_gene_bed = FILTER_GENE_BED(
                     mapping_result[0],
                     mapping_result[1],
                     annotation_result[0]
                 )
 
-                // 4b: Split filtered gene bed into chunks
-                gene_bed_chunks = SPLIT_GENE_BED(filtered_gene_bed).flatten()
+                barcode_file_ch = merged_barcode.first()
+                gene_bed_ch = filtered_gene_bed.first()
 
-                // 4c: Extract and integrate each chunk in parallel
-                barcode_file_ch = extract_result[1].first()
-                bam_ch = mapping_result[0].first()
-                bai_ch = mapping_result[1].first()
-
+                // Use per-chunk BAMs directly for parallel extract_and_integrate
                 chunk_iso_results = EXTRACT_AND_INTEGRATE_READS_CHUNK(
                     barcode_file_ch,
-                    bam_ch,
-                    bai_ch,
-                    gene_bed_chunks
+                    bam_chunks,
+                    gene_bed_ch
                 )
 
                 // 4d: Merge chunk results
