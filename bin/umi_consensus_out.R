@@ -42,7 +42,7 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 # Load input data
 cat("Loading UMI count data...\n")
-umi_count <- read.table(umi_count_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+umi_count <- read.table(umi_count_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
 gene_bed <- readRDS(gene_bed_path)
 
 # Run UMI consensus output (fastq generation + remapping)

@@ -31,7 +31,7 @@ sep                <- parser_args[["sep"]]   %||% ","
 library(LongcellPre)
 
 cat("Loading input data...\n")
-umi_count <- read.table(umi_count_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+umi_count <- read.table(umi_count_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
 cat("Chunk has", nrow(umi_count), "rows across", length(unique(umi_count$gene)), "genes\n")
 
 cat("Loading GTF annotation...\n")
