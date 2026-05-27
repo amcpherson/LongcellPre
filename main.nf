@@ -13,9 +13,11 @@ nextflow.enable.dsl=2
 // usage without affecting accuracy.
 //
 // UMI Counting Chunking:
-// The barcode/isoform data is split into chunks based on genes (~50 genes per
-// chunk, configurable via params.genes_per_chunk). Each gene chunk is processed
-// independently for UMI deduplication, then results are merged.
+// The barcode/isoform data is split into chunks balanced by multi-exon read
+// count (~50k multi-exon reads per chunk, configurable via
+// params.multiexon_reads_per_chunk). Genes are assigned via greedy bin-packing
+// so that each chunk has approximately equal workload. Each gene chunk is
+// processed independently for UMI deduplication, then results are merged.
 //
 // ============================================================================
 
@@ -77,7 +79,7 @@ params.sep = ","
 // FASTQ chunking parameters
 params.fastq_chunk_size = 1000000  // Number of reads per chunk (1M default)
 // UMI counting chunking parameters
-params.genes_per_chunk = 500  // Approximate number of genes per chunk
+params.multiexon_reads_per_chunk = 50000  // Target multi-exon reads per chunk
 // Tool paths
 params.minimap2 = "minimap2"
 params.samtools = "samtools"
@@ -323,29 +325,46 @@ process SPLIT_UMI_DATA {
     data <- read.table('${barcode_iso_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
     qual <- read.table('${adapter_needle_file}', header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "", comment.char = "")
     
-    # Get unique genes and split into chunks
-    genes <- unique(data\$gene)
+    # Count multi-exon reads per gene (these drive runtime/memory)
+    is_multi <- grepl("|", data\$isoform, fixed = TRUE)
+    gene_multi_counts <- tapply(is_multi, data\$gene, sum)
+    gene_multi_counts <- sort(gene_multi_counts, decreasing = TRUE)
+    genes <- names(gene_multi_counts)
+    
     n_genes <- length(genes)
-    n_chunks <- max(1, ceiling(n_genes / ${params.genes_per_chunk}))
+    n_chunks <- max(1, ceiling(sum(gene_multi_counts) / ${params.multiexon_reads_per_chunk}))
     
-    cat("Splitting", n_genes, "genes into", n_chunks, "chunks\\n")
+    cat("Splitting", n_genes, "genes into", n_chunks, "chunks (balanced by multi-exon reads)\\n")
+    cat("Total multi-exon reads:", sum(gene_multi_counts), "\\n")
+    cat("Target per chunk:", ${params.multiexon_reads_per_chunk}, "\\n")
+    cat("Top 5 genes by multi-exon reads:\\n")
+    for (g in head(genes, 5)) {
+        cat("  ", g, ":", gene_multi_counts[g], "\\n")
+    }
     
-    # Create gene chunks - roughly balanced
-    gene_chunks <- split(genes, ceiling(seq_along(genes) / (n_genes / n_chunks)))
+    # Greedy bin-packing: assign each gene (largest first) to the least-loaded chunk
+    chunk_totals <- rep(0, n_chunks)
+    gene_assignments <- integer(n_genes)
+    for (i in seq_along(genes)) {
+        min_chunk <- which.min(chunk_totals)
+        gene_assignments[i] <- min_chunk
+        chunk_totals[min_chunk] <- chunk_totals[min_chunk] + gene_multi_counts[i]
+    }
     
     # Write each chunk
-    for (i in seq_along(gene_chunks)) {
-        chunk_genes <- gene_chunks[[i]]
+    for (i in seq_len(n_chunks)) {
+        chunk_genes <- genes[gene_assignments == i]
         chunk_data <- data[data\$gene %in% chunk_genes, ]
         
         chunk_file <- paste0('data_chunk_', sprintf('%03d', i), '.txt')
         write.table(chunk_data, file = chunk_file, sep = "\t", quote = FALSE, 
                     row.names = FALSE, col.names = TRUE)
-        cat("Wrote", nrow(chunk_data), "rows to", chunk_file, "\\n")
+        cat("Chunk", i, ":", length(chunk_genes), "genes,", nrow(chunk_data), "reads,",
+            chunk_totals[i], "multi-exon\\n")
     }
     
     # Qual file is the same for all chunks (no need to split), but copy for each chunk
-    for (i in seq_along(gene_chunks)) {
+    for (i in seq_len(n_chunks)) {
         qual_file <- paste0('qual_chunk_', sprintf('%03d', i), '.txt')
         write.table(qual, file = qual_file, sep = "\t", quote = FALSE,
                     row.names = FALSE, col.names = TRUE)
@@ -431,11 +450,11 @@ process SPLIT_ISO_INPUT {
 
     genes <- unique(data\$gene)
     n_genes <- length(genes)
-    n_chunks <- max(1, ceiling(n_genes / ${params.genes_per_chunk}))
+    n_chunks <- max(1, ceiling(n_genes / 500))
 
     cat("Splitting", n_genes, "genes into", n_chunks, "chunks\\n")
 
-    gene_chunks <- split(genes, ceiling(seq_along(genes) / (n_genes / n_chunks)))
+    gene_chunks <- split(genes, ceiling(seq_along(genes) / max(1, n_genes / n_chunks)))
 
     for (i in seq_along(gene_chunks)) {
         chunk_data <- data[data\$gene %in% gene_chunks[[i]], ]
@@ -526,7 +545,7 @@ process SPLIT_CONSENSUS_INPUT {
 
     genes <- unique(data\$gene)
     n_genes <- length(genes)
-    n_chunks <- max(1, ceiling(n_genes / ${params.genes_per_chunk}))
+    n_chunks <- max(1, ceiling(n_genes / 500))
 
     cat("Splitting", n_genes, "genes into", n_chunks, "consensus chunks\\n")
 
