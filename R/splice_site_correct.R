@@ -13,14 +13,34 @@
 splice_site_table <- function(isoforms,
                               split = "|", sep = ",",
                               splice_site_thresh = 10) {
-  out <- splice_site_table_cpp(isoforms, split, sep, splice_site_thresh)
+  # Partition: only multi-exon reads need the expensive C++ matrix allocation
+  is_multi <- grepl(split, isoforms, fixed = TRUE)
+  multi_idx <- which(is_multi)
+  single_idx <- which(!is_multi)
+
+  if (length(multi_idx) == 0) {
+    # No multi-exon reads: return single-exon reads with just id/start/end
+    parts <- strsplit(isoforms[single_idx], sep, fixed = TRUE)
+    out <- data.frame(
+      id = as.numeric(single_idx),
+      start = as.numeric(vapply(parts, `[`, character(1), 1)),
+      end = as.numeric(vapply(parts, `[`, character(1), 2)),
+      stringsAsFactors = FALSE
+    )
+    return(out)
+  }
+
+  # Run C++ only on multi-exon reads
+  out <- splice_site_table_cpp(isoforms[multi_idx], split, sep, splice_site_thresh)
 
   # Ensure numeric & data.frame once
   out$start <- as.numeric(out$start)
   out$end   <- as.numeric(out$end)
-  out = as.data.frame(do.call(cbind,out))
+  out = as.data.frame(do.call(cbind, out))
 
-  # return(out)
+  # Remap id back to original indices (keep as numeric to match original output type)
+  out$id <- as.numeric(multi_idx[out$id])
+
   if (ncol(out) > 3) {
     # Identify, numeric-order, and keep mid-site columns
     mid_names <- setdiff(colnames(out), c("id", "start", "end"))
@@ -42,10 +62,45 @@ splice_site_table <- function(isoforms,
       out[[nm]] <- v
     }
 
-    # Reassemble columns in desired order without cbind copying chains
+    # Reassemble multi-exon output
     out <- out[c("id", "start", mid_cols, "end")]
+
+    # Append single-exon reads: 0 where site is within [start, end], NA outside
+    if (length(single_idx) > 0) {
+      parts <- strsplit(isoforms[single_idx], sep, fixed = TRUE)
+      s_start <- as.numeric(vapply(parts, `[`, character(1), 1))
+      s_end   <- as.numeric(vapply(parts, `[`, character(1), 2))
+      single_df <- data.frame(
+        id = as.numeric(single_idx),
+        start = s_start,
+        stringsAsFactors = FALSE
+      )
+      for (nm in mid_cols) {
+        site_pos <- as.numeric(nm)
+        v <- rep(0, length(single_idx))
+        bad <- (site_pos < s_start) | (site_pos > s_end)
+        v[bad] <- NA_real_
+        single_df[[nm]] <- v
+      }
+      single_df$end <- s_end
+      out <- rbind(out, single_df)
+    }
+  } else {
+    # No frequent sites found in multi-exon reads; combine with single-exon
+    if (length(single_idx) > 0) {
+      parts <- strsplit(isoforms[single_idx], sep, fixed = TRUE)
+      single_df <- data.frame(
+        id = as.numeric(single_idx),
+        start = as.numeric(vapply(parts, `[`, character(1), 1)),
+        end = as.numeric(vapply(parts, `[`, character(1), 2)),
+        stringsAsFactors = FALSE
+      )
+      out <- rbind(out, single_df)
+    }
   }
 
+  # Sort by original index
+  out <- out[order(out$id), ]
   rownames(out) <- NULL
   out
 }
